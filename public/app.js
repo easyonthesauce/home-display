@@ -130,6 +130,12 @@
     setAnimated(`${device.id}:e`, e ?? 0, (n) => e == null ? '—' : fmt2(n), root.querySelector('[data-metric=energy]'));
 
     renderPhases(root, device.phases);
+
+    const dpsRaw = device.extra?.dpsRaw;
+    if (dpsRaw) {
+      const pre = root.querySelector('.card__dps');
+      if (pre) pre.textContent = JSON.stringify(dpsRaw, null, 2);
+    }
   }
 
   function renderSnapshot(snap) {

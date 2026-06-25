@@ -1,84 +1,84 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const path = require('path');
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const { TuyaClient } = require('./src/tuya');
+const { LocalDevice, dpsToStatusArray } = require('./src/tuya');
 const { normalize } = require('./src/metrics');
 
 const PORT = Number(process.env.PORT || 3000);
-const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 2000);
+const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 5000);
+const BROADCAST_INTERVAL_MS = Number(process.env.BROADCAST_INTERVAL_MS || 1000);
 
+// .env format:  id:localKey:Label[:ip],id2:localKey2:Label2[:ip2]
+// version + dp map overrides come from separate vars to keep this readable.
 function parseDevices(spec) {
   return (spec || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
     .map((entry) => {
-      const [id, ...rest] = entry.split(':');
-      return { id: id.trim(), label: rest.join(':').trim() || id.trim() };
+      const parts = entry.split(':').map((p) => p.trim());
+      const [id, key, label, ip] = parts;
+      if (!id || !key) throw new Error(`Bad TUYA_DEVICES entry "${entry}". Expected id:localKey:Label[:ip]`);
+      return { id, key, label: label || id, ip: ip || undefined };
     });
 }
 
-const devices = parseDevices(process.env.TUYA_DEVICE_IDS);
+function parseDpOverrides(raw) {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn(`Ignoring TUYA_DPS_OVERRIDES — not valid JSON: ${err.message}`);
+    return {};
+  }
+}
+
+const devices = parseDevices(process.env.TUYA_DEVICES);
 if (!devices.length) {
-  console.error('No TUYA_DEVICE_IDS configured. Copy .env.example to .env and set it.');
+  console.error('No TUYA_DEVICES configured. Copy .env.example to .env and set it.');
   process.exit(1);
 }
 
-const tuya = new TuyaClient({
-  clientId: process.env.TUYA_CLIENT_ID,
-  clientSecret: process.env.TUYA_CLIENT_SECRET,
-  region: (process.env.TUYA_REGION || 'eu').toLowerCase(),
+const dpOverrides = parseDpOverrides(process.env.TUYA_DPS_OVERRIDES);
+const version = process.env.TUYA_PROTOCOL_VERSION || '3.3';
+
+const snapshots = new Map();
+
+function emitSnapshot(dev, extra = {}) {
+  const status = dpsToStatusArray(dev.dps, dpOverrides);
+  const snap = normalize(
+    { id: dev.id, label: dev.label, online: dev.online, name: dev.label },
+    status,
+  );
+  snap.error = extra.error || (dev.online ? null : dev.lastError);
+  snap.extra.dpsRaw = { ...dev.dps };
+  snapshots.set(dev.id, snap);
+}
+
+const clients = devices.map((d) => {
+  const dev = new LocalDevice({
+    id: d.id,
+    key: d.key,
+    ip: d.ip,
+    label: d.label,
+    version,
+    refreshIntervalMs: REFRESH_INTERVAL_MS,
+  });
+
+  dev.on('dps', () => emitSnapshot(dev));
+  dev.on('online',  () => { console.log(`[tuya] ${d.label} connected`); emitSnapshot(dev); });
+  dev.on('offline', () => { console.log(`[tuya] ${d.label} disconnected`); emitSnapshot(dev); });
+  dev.on('error',   (err) => {
+    console.warn(`[tuya] ${d.label} error: ${err.message || err}`);
+    emitSnapshot(dev, { error: err.message || String(err) });
+  });
+
+  emitSnapshot(dev);
+  dev.start().catch((err) => console.warn(`[tuya] ${d.label} start failed: ${err.message}`));
+  return dev;
 });
-
-const deviceMeta = new Map(devices.map((d) => [d.id, { ...d }]));
-const lastSnapshot = new Map();
-
-async function refreshMeta() {
-  await Promise.all(
-    devices.map(async (d) => {
-      try {
-        const info = await tuya.getDeviceInfo(d.id);
-        const meta = deviceMeta.get(d.id);
-        meta.name = info?.name || meta.label;
-        meta.online = info?.online ?? true;
-        meta.category = info?.category;
-      } catch (err) {
-        console.warn(`[meta] ${d.id}: ${err.message}`);
-      }
-    }),
-  );
-}
-
-async function pollOnce() {
-  const results = await Promise.all(
-    devices.map(async (d) => {
-      const meta = deviceMeta.get(d.id);
-      try {
-        const status = await tuya.getDeviceStatus(d.id);
-        const snap = normalize(meta, status);
-        lastSnapshot.set(d.id, snap);
-        return snap;
-      } catch (err) {
-        const snap = {
-          id: d.id,
-          label: meta.label,
-          name: meta.name,
-          online: false,
-          error: err.message,
-          updatedAt: Date.now(),
-          metrics: {},
-          phases: {},
-          extra: {},
-        };
-        lastSnapshot.set(d.id, snap);
-        return snap;
-      }
-    }),
-  );
-  broadcast({ type: 'snapshot', devices: results, ts: Date.now() });
-}
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
@@ -86,44 +86,45 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/snapshot', (_req, res) => {
   res.json({
     ts: Date.now(),
-    devices: Array.from(lastSnapshot.values()),
+    devices: Array.from(snapshots.values()),
   });
 });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-function broadcast(msg) {
-  const data = JSON.stringify(msg);
+function broadcast() {
+  if (!wss.clients.size) return;
+  const payload = JSON.stringify({
+    type: 'snapshot',
+    devices: Array.from(snapshots.values()),
+    ts: Date.now(),
+  });
   for (const client of wss.clients) {
-    if (client.readyState === 1) client.send(data);
+    if (client.readyState === 1) client.send(payload);
   }
 }
 
 wss.on('connection', (ws) => {
   ws.send(JSON.stringify({
     type: 'snapshot',
-    devices: Array.from(lastSnapshot.values()),
+    devices: Array.from(snapshots.values()),
     ts: Date.now(),
   }));
 });
 
-(async () => {
-  try {
-    await refreshMeta();
-  } catch (err) {
-    console.warn('[startup] meta refresh failed:', err.message);
-  }
-  await pollOnce().catch((err) => console.warn('[startup] poll failed:', err.message));
-  setInterval(() => {
-    pollOnce().catch((err) => console.warn('[poll]', err.message));
-  }, POLL_INTERVAL_MS);
-  setInterval(() => {
-    refreshMeta().catch(() => {});
-  }, 5 * 60 * 1000);
+// Push-style snapshots come in as DPs arrive, but we also batch-broadcast at
+// a steady cadence so multiple clients stay in sync and stale timers tick.
+setInterval(broadcast, BROADCAST_INTERVAL_MS);
 
-  server.listen(PORT, () => {
-    console.log(`home-display ready on http://localhost:${PORT}`);
-    console.log(`polling ${devices.length} device(s) every ${POLL_INTERVAL_MS}ms`);
-  });
-})();
+server.listen(PORT, () => {
+  console.log(`home-display ready on http://localhost:${PORT}`);
+  console.log(`connecting to ${devices.length} device(s) over LAN (protocol v${version})`);
+});
+
+function shutdown() {
+  for (const c of clients) c.stop();
+  server.close(() => process.exit(0));
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
