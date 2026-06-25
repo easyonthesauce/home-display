@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Home Energy</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main id="app" class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot" id="conn-dot"></span>
+        <span>Home Energy</span>
+      </div>
+      <div class="topbar__right">
+        <div class="clock" id="clock">--:--</div>
+        <button id="fullscreen-btn" class="ghost-btn" title="Toggle fullscreen">⛶</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero__label">TOTAL DRAW</div>
+      <div class="hero__value">
+        <span id="total-power">0</span><span class="hero__unit">W</span>
+      </div>
+      <div class="hero__bar"><div class="hero__bar-fill" id="total-bar"></div></div>
+      <div class="hero__sub">
+        <span id="total-energy">0.00 kWh today</span>
+        <span class="dot-sep">·</span>
+        <span id="total-cost">—</span>
+      </div>
+    </section>
+
+    <section class="grid" id="device-grid"></section>
+
+    <footer class="footer">
+      <span id="status-text">connecting…</span>
+    </footer>
+  </main>
+
+  <template id="device-tpl">
+    <article class="card">
+      <header class="card__head">
+        <div class="card__title"></div>
+        <div class="card__state">
+          <span class="card__online">●</span>
+          <span class="card__ts">—</span>
+        </div>
+      </header>
+
+      <div class="card__gauge">
+        <svg viewBox="0 0 240 240" class="gauge">
+          <defs>
+            <linearGradient class="gauge__grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#22d3ee" />
+              <stop offset="100%" stop-color="#a855f7" />
+            </linearGradient>
+          </defs>
+          <circle cx="120" cy="120" r="98" class="gauge__track" />
+          <circle cx="120" cy="120" r="98" class="gauge__fill" />
+          <text x="120" y="118" class="gauge__value" text-anchor="middle">0</text>
+          <text x="120" y="148" class="gauge__unit" text-anchor="middle">W</text>
+        </svg>
+      </div>
+
+      <div class="card__readouts">
+        <div class="ro">
+          <div class="ro__label">VOLTAGE</div>
+          <div class="ro__value"><span data-metric="voltage">—</span><span class="ro__unit">V</span></div>
+        </div>
+        <div class="ro">
+          <div class="ro__label">CURRENT</div>
+          <div class="ro__value"><span data-metric="current">—</span><span class="ro__unit">A</span></div>
+        </div>
+        <div class="ro">
+          <div class="ro__label">ENERGY</div>
+          <div class="ro__value"><span data-metric="energy">—</span><span class="ro__unit">kWh</span></div>
+        </div>
+      </div>
+
+      <div class="card__phases"></div>
+    </article>
+  </template>
+
+  <script src="./app.js"></script>
+</body>
+</html>
