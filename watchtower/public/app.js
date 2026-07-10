@@ -1,0 +1,228 @@
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const connDot = $('conn-dot');
+  const statusText = $('status-text');
+  const grid = $('camera-grid');
+  const tpl = $('camera-tpl');
+  const argPanel = $('arg-panel');
+  const recBadge = $('rec-badge');
+
+  const cams = new Map();       // cameraId -> card element
+  const sceneTimes = new Map(); // cameraId -> at (for "ago")
+  const lastScenes = new Map(); // cameraId -> latest scene
+
+  // ---------- gauges ----------
+  function setGauge(fillEl, pct, dasharray) {
+    const c = Math.max(0, Math.min(1, pct));
+    fillEl.style.strokeDashoffset = String(dasharray * (1 - c));
+  }
+
+  // ---------- mess-o-meter (worst mess across cameras) ----------
+  function renderMess(scenes) {
+    const mess = scenes.reduce((m, s) => Math.max(m, s.mess_score || 0), 0);
+    setGauge($('mess-fill'), mess / 10, 424);
+    $('mess-value').textContent = mess;
+  }
+
+  // ---------- vibe sparkline ----------
+  function renderVibe(vibe) {
+    if (!vibe || !vibe.length) { $('vibe-score').textContent = '—'; return; }
+    const last = vibe[vibe.length - 1];
+    $('vibe-score').textContent = last.score;
+    $('vibe-label').textContent = last.label || '';
+    const n = vibe.length;
+    const pts = vibe.map((v, i) => {
+      const x = n > 1 ? (i / (n - 1)) * 600 : 0;
+      const y = 120 - (v.score / 100) * 120;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    $('vibe-path').setAttribute('d', 'M' + pts.join(' L'));
+  }
+
+  // ---------- leaderboards ----------
+  function renderBoard(id, rows, fmt) {
+    const el = $(id);
+    if (!rows || !rows.length) { el.innerHTML = '<li class="board__empty">nothing yet</li>'; return; }
+    el.innerHTML = rows.map((r) => `<li>${escapeHtml(r.name)}<span>${fmt(r)}</span></li>`).join('');
+  }
+  function renderBoards(lb) {
+    if (!lb) return;
+    renderBoard('board-shame', lb.shame, (r) => `${r.offenses}×`);
+    renderBoard('board-effort', lb.effort, (r) => `${r.avgEffort}`);
+    renderBoard('board-recognition', lb.recognition, (r) => `${r.recognitions}×`);
+  }
+
+  // ---------- camera cards ----------
+  function ensureCard(scene) {
+    let el = cams.get(scene.cameraId);
+    if (el) return el;
+    el = tpl.content.firstElementChild.cloneNode(true);
+    el.dataset.id = scene.cameraId;
+    el.querySelector('.cam__name').textContent = scene.camera || scene.cameraId;
+    grid.appendChild(el);
+    cams.set(scene.cameraId, el);
+    return el;
+  }
+  function renderScene(scene) {
+    const el = ensureCard(scene);
+    lastScenes.set(scene.cameraId, scene);
+    sceneTimes.set(scene.cameraId, scene.at);
+    el.querySelector('[data-f=count]').textContent = scene.people_count ?? 0;
+
+    const people = el.querySelector('[data-f=people]');
+    people.innerHTML = (scene.people || []).map((p) => {
+      const name = /^unknown/i.test(p.identity) ? 'someone' : escapeHtml(p.identity);
+      return `<span class="chip">${name}<small>${escapeHtml(p.doing || '')}</small><span class="eff">${p.effort}</span></span>`;
+    }).join('') || '<span class="cam__doing">nobody in view</span>';
+
+    el.querySelector('[data-f=activities]').textContent = (scene.activities || []).join(' · ');
+
+    const notes = el.querySelector('[data-f=notes]');
+    notes.innerHTML = (scene.notable_observations || []).map((n) => `<li>${escapeHtml(n)}</li>`).join('');
+
+    const risks = el.querySelector('[data-f=risks]');
+    risks.innerHTML = (scene.environment_risks || []).map((r) =>
+      `<span class="risk ${r.severity}">${escapeHtml(r.risk)}</span>`).join('');
+
+    const cw = scene.child_wellbeing || { risk_level: 'none' };
+    const child = el.querySelector('[data-f=child]');
+    child.className = `badge ${cw.risk_level}`;
+    child.textContent = cw.risk_level === 'none' ? 'kids: ok' : `kids: ${cw.risk_level}${cw.notes ? ' — ' + cw.notes : ''}`;
+  }
+
+  function tickAges() {
+    for (const [id, el] of cams) {
+      const at = sceneTimes.get(id);
+      if (!at) continue;
+      const s = Math.round((Date.now() - at) / 1000);
+      el.querySelector('[data-f=ago]').textContent = s < 90 ? `${s}s ago` : `${Math.round(s / 60)}m ago`;
+    }
+  }
+  setInterval(tickAges, 1000);
+
+  // ---------- argument overlay ----------
+  function showArg(show) { argPanel.hidden = !show; recBadge.hidden = !show; }
+  function renderAudio(p) {
+    setGauge($('arg-fill'), p.escalation / 100, 462);
+    $('arg-value').textContent = p.escalation;
+    $('arg-tone').textContent = p.tone || '—';
+    $('arg-trend').textContent = ({ escalating: '▲ escalating', 'de-escalating': '▼ calming', stable: '― steady' })[p.trend] || '';
+    $('arg-noise').textContent = `noise ${Math.round(p.noise || 0)}`;
+    $('arg-summary').textContent = p.summary || '';
+    $('arg-transcript').textContent = (p.transcriptTail || []).join('  ·  ');
+
+    const worm = p.worm || [];
+    const n = worm.length;
+    const pts = worm.map((w, i) => {
+      const x = n > 1 ? (i / (n - 1)) * 600 : 0;
+      const y = 120 - (w.escalation / 100) * 120;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    $('worm-path').setAttribute('d', n ? 'M' + pts.join(' L') : '');
+    $('worm-safe').setAttribute('d', 'M0,72 L600,72 L600,120 L0,120 Z');  // calm band (<40)
+  }
+
+  // ---------- websocket ----------
+  let lastMsgAt = 0, ws;
+  function applyState(s) {
+    if (s.scenes) s.scenes.forEach(renderScene);
+    if (s.scenes) renderMess(s.scenes);
+    if (s.store) { renderVibe(s.store.vibe); renderBoards(s.store.leaderboards); }
+    showArg(Boolean(s.audioActive));
+    statusText.textContent = s.hasApiKey ? 'live' : 'live (mock analysis — no API key)';
+  }
+  function handle(msg) {
+    switch (msg.type) {
+      case 'hello': applyState(msg.payload); break;
+      case 'scene.update':
+        renderScene(msg.payload);
+        renderMess(Array.from(lastScenes.values()));
+        break;
+      case 'audio.start': showArg(true); break;
+      case 'audio.update': showArg(true); renderAudio(msg.payload); break;
+      case 'audio.end': showArg(false); break;
+      case 'incident.recorded': flashStatus(`argument logged (peak ${msg.payload.peak})`); break;
+      case 'alert.child': flashStatus(`⚠ child wellbeing: ${msg.payload.risk_level} on ${msg.payload.camera}`); break;
+    }
+  }
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    connDot.className = 'dot';
+    statusText.textContent = 'connecting…';
+    ws.onopen = () => { connDot.className = 'dot live'; };
+    ws.onmessage = (e) => { lastMsgAt = Date.now(); try { handle(JSON.parse(e.data)); } catch {} };
+    ws.onclose = () => { connDot.className = 'dot down'; statusText.textContent = 'reconnecting…'; setTimeout(connect, 1500); };
+    ws.onerror = () => ws.close();
+  }
+  connect();
+
+  let flashTimer;
+  function flashStatus(text) {
+    statusText.textContent = text;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { statusText.textContent = 'live'; }, 6000);
+  }
+
+  // ---------- microphone loud-noise detection ----------
+  // The kitchen display's own mic is a cheap always-on trigger. Crossing the loud
+  // threshold tells the server to start pulling + analysing the camera's audio.
+  const LOUD_ON = 62, QUIET = 30, QUIET_HOLD_MS = 6000;
+  let eventActive = false, quietMs = 0, lastLevelPost = 0, smooth = 0;
+
+  async function post(path, body) {
+    try { await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); }
+    catch {}
+  }
+
+  async function enableMic() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize);
+      const btn = $('mic-btn');
+      btn.textContent = '🎙 listening';
+      btn.classList.add('armed');
+
+      setInterval(() => {
+        analyser.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+        const rms = Math.sqrt(sum / buf.length);            // 0..1
+        const level = Math.min(100, Math.round(rms * 320)); // scaled to a 0-100 "loudness"
+        smooth = smooth * 0.7 + level * 0.3;
+        const now = Date.now();
+
+        if (!eventActive && smooth >= LOUD_ON) {
+          eventActive = true; quietMs = 0;
+          post('/api/audio/loud', { level: Math.round(smooth) });
+        } else if (eventActive) {
+          if (now - lastLevelPost > 1000) { lastLevelPost = now; post('/api/audio/level', { level: Math.round(smooth) }); }
+          quietMs = smooth < QUIET ? quietMs + 250 : 0;
+          if (quietMs >= QUIET_HOLD_MS) { eventActive = false; quietMs = 0; post('/api/audio/quiet'); }
+        }
+      }, 250);
+    } catch (e) {
+      $('mic-btn').textContent = '🎙 mic blocked';
+      flashStatus('microphone permission denied');
+    }
+  }
+  $('mic-btn').addEventListener('click', enableMic);
+
+  // ---------- chrome: clock + fullscreen ----------
+  function clock() { $('clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  clock(); setInterval(clock, 15000);
+  $('fullscreen-btn').addEventListener('click', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') $('fullscreen-btn').click(); });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+})();
