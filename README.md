@@ -1,36 +1,47 @@
 # home-display
 
-Fullscreen realtime dashboard for Tuya energy monitors. Polls the Tuya Cloud
-API on the server, pushes updates to the browser over WebSocket, and renders
-animated SVG gauges and rolling number readouts.
+Fullscreen realtime dashboard for Tuya energy monitors. Talks to each meter
+**directly over your LAN** (no Tuya Cloud API, no subscription, no rate
+limits) via [`tuyapi`](https://github.com/codetheweb/tuyapi), pushes updates
+to the browser over WebSocket, and renders animated SVG arc gauges and
+rolling number readouts.
 
 ## Setup
 
-### 1. Get Tuya Cloud credentials
+### 1. Get each device's local key
 
-1. Sign up at <https://iot.tuya.com/> (free).
-2. **Cloud → Development → Create Cloud Project**. Pick the data center that
-   matches your Smart Life account region (EU / US / CN / IN).
-3. On the project page, copy the **Access ID / Client ID** and
-   **Access Secret / Client Secret**.
-4. **Cloud → Development → your project → Devices → Link Tuya App Account**
-   and link the Smart Life / Tuya Smart account your meters are paired with.
-5. In **Devices**, copy the **Device ID** of each energy monitor.
-6. **Cloud → Development → your project → Service API** → make sure
-   *IoT Core* and *Authorization* are subscribed (they usually are by default).
+The local key is a per-device secret your meter uses to encrypt LAN traffic.
+You only need to extract it once. A few options:
+
+- **`tinytuya` wizard** — easiest if you can still log into a free Tuya IoT
+  developer account (even an expired one often still permits the wizard
+  endpoint). `pip install tinytuya && python -m tinytuya wizard`.
+- **`tuya-cli wizard`** — same idea, Node-based. `npx @tuyapi/cli wizard`.
+- **Smart Life Android app cache** — root the phone, pull
+  `/data/data/com.tuya.smartlife/shared_prefs/` and grep for `localKey`.
+- **Sniffing during pairing** — `tinytuya` also documents an
+  on-pairing-network capture method that doesn't need the cloud.
+
+Whichever route you take, save the `id`, `localKey`, and (optionally) the
+device's LAN IP for each meter.
 
 ### 2. Configure
 
 ```bash
 cp .env.example .env
-# edit .env: paste client id, secret, region, and the device IDs
+# edit .env: paste each meter's id, local key, label, and (optionally) IP
 ```
 
-`TUYA_DEVICE_IDS` accepts a comma-separated list with optional friendly labels:
+`TUYA_DEVICES` format (comma-separated):
 
 ```
-TUYA_DEVICE_IDS=bf1234…:Main Panel,bfabcd…:Solar
+TUYA_DEVICES=bf1234…:abcdef0123…:Main Panel,bfabcd…:fedcba9876…:Solar:192.168.1.42
 ```
+
+If you omit the IP, the server discovers each device via UDP broadcast on
+startup — this only works if the server is on the same LAN subnet as the
+meter, so for production deployments it's worth pinning the IP via your
+router's DHCP reservations.
 
 ### 3. Run
 
@@ -39,42 +50,57 @@ npm install
 npm start
 ```
 
-Open <http://localhost:3000> on any device (a wall-mounted tablet, a Pi
-running Chromium kiosk, a spare laptop). Press **F** or click the ⛶ button to
-go fullscreen.
+Open <http://localhost:3000>. Press **F** or click ⛶ for fullscreen.
 
 ## How it works
 
-- `server.js` boots Express + a WebSocket server on `/ws`.
-- `src/tuya.js` signs requests with HMAC-SHA256 per the Tuya Cloud spec and
-  caches the access token until it nears expiry.
-- Every `POLL_INTERVAL_MS` (default 2 s) the server fetches each device's
-  status, normalises the DPs through `src/metrics.js`, and broadcasts a
-  snapshot to all WebSocket clients.
-- The browser tweens numbers and gauges between snapshots so the display
-  feels continuous.
+- `src/tuya.js` wraps `tuyapi` so each device gets a persistent TCP
+  connection. We listen for the `data` and `dp-refresh` events the meter
+  pushes whenever a DP changes, and call `refresh()` on a slow timer
+  (`REFRESH_INTERVAL_MS`, default 5 s) as a safety net.
+- `src/metrics.js` normalises Tuya's per-model device-point (DP) codes
+  into a canonical schema — power (W), voltage (V), current (A), energy
+  (kWh), per-phase blobs, frequency, power-factor — with the right
+  scaling factors applied.
+- `server.js` keeps the latest snapshot per device in memory, emits a
+  fresh snapshot to the browser every time a DP changes, and also
+  broadcasts on a steady cadence (`BROADCAST_INTERVAL_MS`, default 1 s)
+  so stale-data timers in the UI keep ticking.
+- The dashboard tweens numbers and gauges between snapshots via
+  `requestAnimationFrame`, so the display feels continuous instead of
+  stepping with each event.
 
-## Supported Tuya DP codes
+## Figuring out an unfamiliar meter
 
-`src/metrics.js` maps these device-point codes to canonical metrics:
+The Tuya local protocol identifies DPs by integer index, not by code name,
+and the schema varies by model. We pre-map the common indexes used by most
+single-phase and 3-phase Tuya energy monitors:
 
-| Tuya code(s)                                              | Metric    | Unit |
-| --------------------------------------------------------- | --------- | ---- |
-| `cur_power`, `power`                                      | power     | W    |
-| `cur_voltage`, `voltage`                                  | voltage   | V    |
-| `cur_current`, `current`                                  | current   | A    |
-| `add_ele`, `forward_energy_total`, `total_forward_energy` | energy    | kWh  |
-| `cur_frequency`, `frequency`                              | frequency | Hz   |
-| `power_factor`                                            | pf        | —    |
-| `phase_a` / `phase_b` / `phase_c` (base64)                | per-phase | —    |
+| DP index | Mapped code     | Metric    |
+| -------- | --------------- | --------- |
+| 17       | `add_ele`       | energy    |
+| 18       | `cur_current`   | current   |
+| 19       | `cur_power`     | power     |
+| 20       | `cur_voltage`   | voltage   |
+| 101–103  | `phase_a/b/c`   | per-phase |
+| 131      | `frequency`     | frequency |
+| 132      | `power_factor`  | pf        |
 
-Unknown codes are preserved on the snapshot under `extra`, so you can extend
-the mapping for an unfamiliar device by inspecting `GET /api/snapshot`.
+If your meter doesn't fit, expand the **raw DPs** panel on each card — it
+shows the live integer-keyed payload as the device sends it. Map the
+indexes you care about into `TUYA_DPS_OVERRIDES` in `.env`:
+
+```
+TUYA_DPS_OVERRIDES={"5":"cur_power","6":"cur_voltage","7":"cur_current","9":"add_ele"}
+```
+
+Any unmapped index is preserved on the snapshot as `dp_<index>` so nothing
+is lost.
 
 ## Notes
 
-- Tuya rate-limits aggressive polling; 2 s is a safe default. Going below
-  1 s on multiple devices may trigger throttling.
-- If you see `1004 sign invalid`, double-check the region matches your
-  project's data centre.
+- Most devices made after ~2020 speak protocol v3.3 or v3.4. If a device
+  refuses to connect, flip `TUYA_PROTOCOL_VERSION` to the other one.
+- After a firmware OTA or re-pairing the device, the local key changes;
+  re-run your extraction step and update `.env`.
 - Keep `.env` out of git (the included `.gitignore` already excludes it).
