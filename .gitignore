@@ -3,3 +3,8 @@ node_modules/
 .env.local
 *.log
 .DS_Store
+
+# Watchtower live config + persisted tallies (keep the .example files tracked)
+watchtower/cameras.json
+watchtower/roster.json
+watchtower/state.json

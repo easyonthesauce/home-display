@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>The Kitchen Watch</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot" id="conn-dot"></span>
+        <span>The Kitchen Watch</span>
+      </div>
+      <div class="topbar__right">
+        <div class="rec" id="rec-badge" hidden>● REC — listening</div>
+        <button id="mic-btn" class="ghost-btn" title="Enable microphone listening">🎙 enable mic</button>
+        <div class="clock" id="clock">--:--</div>
+        <button id="fullscreen-btn" class="ghost-btn" title="Fullscreen">⛶</button>
+      </div>
+    </header>
+
+    <!-- Raised-voices overlay: appears only during a live audio event -->
+    <section class="arg" id="arg-panel" hidden>
+      <div class="arg__meter">
+        <svg viewBox="0 0 240 240" class="gauge gauge--arg">
+          <defs>
+            <linearGradient id="arg-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#34d399" /><stop offset="100%" stop-color="#f87171" />
+            </linearGradient>
+          </defs>
+          <circle cx="120" cy="120" r="98" class="gauge__track" />
+          <circle cx="120" cy="120" r="98" class="gauge__zone" />
+          <circle cx="120" cy="120" r="98" class="gauge__fill" id="arg-fill" stroke="url(#arg-grad)" />
+          <text x="120" y="112" class="gauge__value" id="arg-value" text-anchor="middle">0</text>
+          <text x="120" y="140" class="gauge__unit" text-anchor="middle">ARG-U-METER</text>
+          <text x="120" y="162" class="gauge__trend" id="arg-trend" text-anchor="middle"></text>
+        </svg>
+      </div>
+      <div class="arg__body">
+        <div class="arg__head">
+          <span class="arg__tone" id="arg-tone">—</span>
+          <span class="noise" id="arg-noise">noise 0</span>
+        </div>
+        <svg class="worm" id="worm" viewBox="0 0 600 120" preserveAspectRatio="none">
+          <path id="worm-safe" d="" class="worm__safe"></path>
+          <path id="worm-path" d="" class="worm__line"></path>
+        </svg>
+        <div class="arg__summary" id="arg-summary"></div>
+        <div class="arg__transcript" id="arg-transcript"></div>
+      </div>
+    </section>
+
+    <section class="meters">
+      <div class="meter">
+        <svg viewBox="0 0 240 200" class="gauge gauge--mess">
+          <defs>
+            <linearGradient id="mess-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#34d399" /><stop offset="100%" stop-color="#fbbf24" />
+            </linearGradient>
+          </defs>
+          <circle cx="120" cy="120" r="90" class="gauge__track" />
+          <circle cx="120" cy="120" r="90" class="gauge__fill" id="mess-fill" stroke="url(#mess-grad)" />
+          <text x="120" y="115" class="gauge__value" id="mess-value" text-anchor="middle">0</text>
+          <text x="120" y="142" class="gauge__unit" text-anchor="middle">MESS-O-METER</text>
+        </svg>
+      </div>
+      <div class="meter">
+        <div class="vibe">
+          <div class="vibe__label">THE VIBE</div>
+          <div class="vibe__now"><span id="vibe-score">—</span><span class="vibe__tag" id="vibe-label"></span></div>
+          <svg class="spark" id="vibe-spark" viewBox="0 0 600 120" preserveAspectRatio="none">
+            <path id="vibe-path" d="" class="spark__line"></path>
+          </svg>
+        </div>
+      </div>
+      <div class="meter boards">
+        <div class="board">
+          <div class="board__title board__title--shame">🔥 Name &amp; Shame</div>
+          <ol id="board-shame" class="board__list"></ol>
+        </div>
+        <div class="board">
+          <div class="board__title board__title--effort">💪 Grafters</div>
+          <ol id="board-effort" class="board__list"></ol>
+        </div>
+        <div class="board">
+          <div class="board__title board__title--star">⭐ Credit Where Due</div>
+          <ol id="board-recognition" class="board__list"></ol>
+        </div>
+      </div>
+    </section>
+
+    <section class="cameras" id="camera-grid"></section>
+
+    <footer class="footer"><span id="status-text">connecting…</span></footer>
+  </main>
+
+  <template id="camera-tpl">
+    <article class="cam">
+      <header class="cam__head">
+        <span class="cam__name"></span>
+        <span class="cam__count"><b data-f="count">0</b> here</span>
+      </header>
+      <div class="cam__people" data-f="people"></div>
+      <div class="cam__doing" data-f="activities"></div>
+      <ul class="cam__notes" data-f="notes"></ul>
+      <div class="cam__risks" data-f="risks"></div>
+      <div class="cam__foot">
+        <span class="badge" data-f="child"></span>
+        <span class="cam__ago" data-f="ago">—</span>
+      </div>
+    </article>
+  </template>
+
+  <script src="./app.js"></script>
+</body>
+</html>
