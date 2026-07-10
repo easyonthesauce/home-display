@@ -1,91 +1,140 @@
-const crypto = require('crypto');
+// Local LAN client for Tuya energy monitors. No cloud API required at runtime.
+//
+// We open a persistent TCP connection to each device and react to the `data`
+// and `dp-refresh` events the device pushes when its DPs change. As a safety
+// net (some devices stop pushing after a while), we also call refresh() on a
+// timer. Disconnections trigger an exponential-backoff reconnect.
 
-const REGION_HOSTS = {
-  us: 'https://openapi.tuyaus.com',
-  eu: 'https://openapi.tuyaeu.com',
-  cn: 'https://openapi.tuyacn.com',
-  in: 'https://openapi.tuyain.com',
-  ueaz: 'https://openapi-ueaz.tuyaus.com',
-};
+const EventEmitter = require('events');
+const TuyAPI = require('tuyapi');
 
-const sha256Hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
-const hmacSha256Upper = (key, msg) =>
-  crypto.createHmac('sha256', key).update(msg).digest('hex').toUpperCase();
+class LocalDevice extends EventEmitter {
+  constructor({ id, key, ip, version = '3.3', label, refreshIntervalMs = 5000 }) {
+    super();
+    if (!id || !key) throw new Error('id and key are required');
+    this.id = id;
+    this.label = label || id;
+    this.ip = ip;
+    this.version = version;
+    this.refreshIntervalMs = refreshIntervalMs;
+    this.online = false;
+    this.lastError = null;
+    this.dps = {};
+    this._reconnectDelay = 1000;
+    this._stopped = false;
 
-class TuyaClient {
-  constructor({ clientId, clientSecret, region }) {
-    if (!clientId || !clientSecret) {
-      throw new Error('TUYA_CLIENT_ID and TUYA_CLIENT_SECRET are required');
-    }
-    const host = REGION_HOSTS[region] || REGION_HOSTS.eu;
-    this.clientId = clientId;
-    this.clientSecret = clientSecret;
-    this.host = host;
-    this.token = null;
-    this.tokenExpiresAt = 0;
-  }
+    this._tuya = new TuyAPI({
+      id,
+      key,
+      ip,
+      version,
+      issueRefreshOnConnect: true,
+    });
 
-  // Tuya signature spec:
-  //   stringToSign = method + "\n" + sha256(body) + "\n" + signHeaders + "\n" + url
-  //   no token:  sign = HMAC_SHA256(secret, clientId + t + nonce + stringToSign)
-  //   with token: sign = HMAC_SHA256(secret, clientId + accessToken + t + nonce + stringToSign)
-  async request(method, path, { withToken = true, body = '' } = {}) {
-    if (withToken) await this.ensureToken();
+    this._tuya.on('connected', () => {
+      this.online = true;
+      this._reconnectDelay = 1000;
+      this.emit('online');
+      this._scheduleRefresh();
+    });
 
-    const t = Date.now().toString();
-    const nonce = crypto.randomBytes(16).toString('hex');
-    const contentHash = sha256Hex(body || '');
-    const stringToSign = [method.toUpperCase(), contentHash, '', path].join('\n');
-    const signTarget = withToken
-      ? this.clientId + this.token + t + nonce + stringToSign
-      : this.clientId + t + nonce + stringToSign;
-    const sign = hmacSha256Upper(this.clientSecret, signTarget);
+    this._tuya.on('disconnected', () => {
+      this.online = false;
+      this.emit('offline');
+      this._clearRefresh();
+      this._scheduleReconnect();
+    });
 
-    const headers = {
-      'client_id': this.clientId,
-      'sign': sign,
-      't': t,
-      'sign_method': 'HMAC-SHA256',
-      'nonce': nonce,
+    this._tuya.on('error', (err) => {
+      this.lastError = err.message || String(err);
+      this.emit('error', err);
+    });
+
+    const ingest = (data) => {
+      if (!data || !data.dps) return;
+      Object.assign(this.dps, data.dps);
+      this.emit('dps', this.dps);
     };
-    if (withToken) headers.access_token = this.token;
-    if (body) headers['Content-Type'] = 'application/json';
+    this._tuya.on('data', ingest);
+    this._tuya.on('dp-refresh', ingest);
+  }
 
-    const res = await fetch(this.host + path, {
-      method,
-      headers,
-      body: body || undefined,
-    });
+  async start() {
+    this._stopped = false;
+    await this._connect();
+  }
 
-    const text = await res.text();
-    let json;
-    try { json = JSON.parse(text); } catch { json = { raw: text }; }
-    if (!res.ok || json.success === false) {
-      const code = json.code ?? res.status;
-      const msg = json.msg ?? res.statusText;
-      const err = new Error(`Tuya ${method} ${path} failed: ${code} ${msg}`);
-      err.payload = json;
-      throw err;
+  stop() {
+    this._stopped = true;
+    this._clearRefresh();
+    try { this._tuya.disconnect(); } catch { /* ignore */ }
+  }
+
+  async _connect() {
+    if (this._stopped) return;
+    try {
+      if (!this.ip) {
+        // Auto-discover by listening for the device's UDP broadcast.
+        await this._tuya.find({ timeout: 10 });
+      }
+      await this._tuya.connect();
+    } catch (err) {
+      this.lastError = err.message || String(err);
+      this.emit('error', err);
+      this._scheduleReconnect();
     }
-    return json.result;
   }
 
-  async ensureToken() {
-    if (this.token && Date.now() < this.tokenExpiresAt - 60_000) return;
-    const result = await this.request('GET', '/v1.0/token?grant_type=1', {
-      withToken: false,
-    });
-    this.token = result.access_token;
-    this.tokenExpiresAt = Date.now() + result.expire_time * 1000;
+  _scheduleReconnect() {
+    if (this._stopped) return;
+    const delay = Math.min(this._reconnectDelay, 30_000);
+    this._reconnectDelay = Math.min(this._reconnectDelay * 2, 30_000);
+    setTimeout(() => this._connect(), delay);
   }
 
-  getDeviceInfo(deviceId) {
-    return this.request('GET', `/v1.0/iot-03/devices/${deviceId}`);
+  _scheduleRefresh() {
+    this._clearRefresh();
+    this._refreshTimer = setInterval(() => {
+      this._tuya.refresh({ schema: true }).catch((err) => {
+        this.lastError = err.message || String(err);
+      });
+    }, this.refreshIntervalMs);
   }
 
-  getDeviceStatus(deviceId) {
-    return this.request('GET', `/v1.0/iot-03/devices/${deviceId}/status`);
+  _clearRefresh() {
+    if (this._refreshTimer) clearInterval(this._refreshTimer);
+    this._refreshTimer = null;
   }
 }
 
-module.exports = { TuyaClient };
+// Tuya's local protocol identifies DPs by integer index, not by code name.
+// Schemas vary by device. We map common indexes used by single-phase and
+// 3-phase energy monitors back to the canonical codes that `metrics.js`
+// already understands, so the rest of the app stays the same.
+//
+// If your device uses different indexes, set TUYA_DPS_OVERRIDES in .env or
+// inspect the raw `dps` shown on each card (we expose them under `extra.dpsRaw`).
+const DEFAULT_DP_MAP = {
+  1:  'switch',
+  17: 'add_ele',         // 0.01 kWh
+  18: 'cur_current',     // mA
+  19: 'cur_power',       // 0.1 W
+  20: 'cur_voltage',     // 0.1 V
+  101: 'phase_a',
+  102: 'phase_b',
+  103: 'phase_c',
+  131: 'frequency',
+  132: 'power_factor',
+};
+
+function dpsToStatusArray(dps, overrides = {}) {
+  const map = { ...DEFAULT_DP_MAP, ...overrides };
+  const out = [];
+  for (const [k, v] of Object.entries(dps)) {
+    const code = map[k] || `dp_${k}`;
+    out.push({ code, value: v });
+  }
+  return out;
+}
+
+module.exports = { LocalDevice, dpsToStatusArray, DEFAULT_DP_MAP };
