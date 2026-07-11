@@ -3,7 +3,8 @@
     "name": "Kitchen",
     "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/101",
     "audio": true,
-    "trigger": "kitchen"
+    "trigger": "kitchen",
+    "autoTriggerSeconds": 300
   },
   {
     "name": "Living Room",

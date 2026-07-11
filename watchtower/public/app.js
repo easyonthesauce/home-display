@@ -11,21 +11,45 @@
   const sceneTimes = new Map(); // cameraId -> at (for "ago")
   const lastScenes = new Map(); // cameraId -> latest scene
   const triggerBtns = new Map(); // cameraId -> button element
+  const autoRows = new Map();    // cameraId -> { input, countdownEl }
+  const autoState = new Map();   // cameraId -> { seconds, nextAt }
   let camerasRendered = false;
+  let minAutoTriggerSeconds = 15;
 
-  // ---------- manual trigger bar ----------
+  // ---------- manual + auto trigger bar ----------
   function renderTriggerBar(cameras) {
     if (camerasRendered || !cameras || !cameras.length) return;
     camerasRendered = true;
     const bar = $('trigger-bar');
     bar.innerHTML = '';
     for (const cam of cameras) {
+      const row = document.createElement('div');
+      row.className = 'trigger-row';
+
       const btn = document.createElement('button');
       btn.className = 'trigger-btn';
       btn.innerHTML = `<span class="dot"></span><span>trigger ${escapeHtml(cam.name)}</span>`;
       btn.addEventListener('click', () => fireTrigger(cam.id, btn));
-      bar.appendChild(btn);
       triggerBtns.set(cam.id, btn);
+
+      const autoWrap = document.createElement('div');
+      autoWrap.className = 'auto-wrap';
+      autoWrap.innerHTML = `
+        <span class="auto-label">auto every</span>
+        <input type="number" class="auto-input" min="${minAutoTriggerSeconds}" step="5" placeholder="off" />
+        <span class="auto-unit">s</span>
+        <button class="auto-apply" type="button">set</button>
+        <span class="auto-countdown">off</span>
+      `;
+      const input = autoWrap.querySelector('.auto-input');
+      const applyBtn = autoWrap.querySelector('.auto-apply');
+      applyBtn.addEventListener('click', () => setAutoTrigger(cam.id, input.value));
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') setAutoTrigger(cam.id, input.value); });
+      autoRows.set(cam.id, { input, countdownEl: autoWrap.querySelector('.auto-countdown') });
+
+      row.appendChild(btn);
+      row.appendChild(autoWrap);
+      bar.appendChild(row);
     }
   }
 
@@ -46,6 +70,49 @@
       setTimeout(() => { btn.disabled = false; btn.classList.remove('busy'); }, 1500);
     }
   }
+
+  async function setAutoTrigger(cameraId, rawSeconds) {
+    const seconds = rawSeconds === '' ? 0 : Number(rawSeconds);
+    if (!Number.isFinite(seconds) || seconds < 0) { flashStatus('auto interval must be a number ≥ 0'); return; }
+    try {
+      const res = await fetch(`/api/trigger/auto?camera=${encodeURIComponent(cameraId)}&seconds=${seconds}`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) {
+        flashStatus(`auto-trigger update failed: ${body.error || res.status}`);
+        return;
+      }
+      flashStatus(body.seconds > 0 ? `auto-trigger for ${body.camera} set to every ${body.seconds}s` : `auto-trigger for ${body.camera} disabled`);
+    } catch (e) {
+      flashStatus(`auto-trigger update failed: ${e.message}`);
+    }
+  }
+
+  function renderAutoTriggers(list) {
+    if (!list) return;
+    for (const entry of list) {
+      autoState.set(entry.cameraId, entry);
+      const row = autoRows.get(entry.cameraId);
+      if (!row) continue;
+      if (document.activeElement !== row.input) {
+        row.input.value = entry.seconds > 0 ? entry.seconds : '';
+      }
+    }
+    tickAutoCountdowns();
+  }
+
+  function tickAutoCountdowns() {
+    for (const [cameraId, entry] of autoState) {
+      const row = autoRows.get(cameraId);
+      if (!row) continue;
+      if (!entry.seconds || !entry.nextAt) {
+        row.countdownEl.textContent = 'off';
+        continue;
+      }
+      const remaining = Math.max(0, Math.round((entry.nextAt - Date.now()) / 1000));
+      row.countdownEl.textContent = `next in ${remaining}s`;
+    }
+  }
+  setInterval(tickAutoCountdowns, 1000);
 
   // ---------- gauges ----------
   function setGauge(fillEl, pct, dasharray) {
@@ -161,7 +228,9 @@
   // ---------- websocket ----------
   let lastMsgAt = 0, ws;
   function applyState(s) {
+    if (s.minAutoTriggerSeconds) minAutoTriggerSeconds = s.minAutoTriggerSeconds;
     if (s.cameras) renderTriggerBar(s.cameras);
+    if (s.autoTriggers) renderAutoTriggers(s.autoTriggers);
     if (s.scenes) s.scenes.forEach(renderScene);
     if (s.scenes) renderMess(s.scenes);
     if (s.store) { renderVibe(s.store.vibe); renderBoards(s.store.leaderboards); }
@@ -180,6 +249,10 @@
       case 'audio.end': showArg(false); break;
       case 'incident.recorded': flashStatus(`argument logged (peak ${msg.payload.peak})`); break;
       case 'alert.child': flashStatus(`⚠ child wellbeing: ${msg.payload.risk_level} on ${msg.payload.camera}`); break;
+      case 'auto.updated': renderAutoTriggers(msg.payload.list); break;
+      case 'trigger':
+        if (msg.payload.source === 'auto') flashStatus(`auto-trigger fired: ${msg.payload.camera}`);
+        break;
     }
   }
   function connect() {
