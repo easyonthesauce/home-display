@@ -10,6 +10,42 @@
   const cams = new Map();       // cameraId -> card element
   const sceneTimes = new Map(); // cameraId -> at (for "ago")
   const lastScenes = new Map(); // cameraId -> latest scene
+  const triggerBtns = new Map(); // cameraId -> button element
+  let camerasRendered = false;
+
+  // ---------- manual trigger bar ----------
+  function renderTriggerBar(cameras) {
+    if (camerasRendered || !cameras || !cameras.length) return;
+    camerasRendered = true;
+    const bar = $('trigger-bar');
+    bar.innerHTML = '';
+    for (const cam of cameras) {
+      const btn = document.createElement('button');
+      btn.className = 'trigger-btn';
+      btn.innerHTML = `<span class="dot"></span><span>trigger ${escapeHtml(cam.name)}</span>`;
+      btn.addEventListener('click', () => fireTrigger(cam.id, btn));
+      bar.appendChild(btn);
+      triggerBtns.set(cam.id, btn);
+    }
+  }
+
+  async function fireTrigger(cameraId, btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add('busy');
+    flashStatus(`triggering ${cameraId}…`);
+    try {
+      const res = await fetch(`/api/trigger/test?camera=${encodeURIComponent(cameraId)}`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) {
+        flashStatus(`trigger failed: ${body.error || res.status}`);
+      }
+    } catch (e) {
+      flashStatus(`trigger failed: ${e.message}`);
+    } finally {
+      setTimeout(() => { btn.disabled = false; btn.classList.remove('busy'); }, 1500);
+    }
+  }
 
   // ---------- gauges ----------
   function setGauge(fillEl, pct, dasharray) {
@@ -125,6 +161,7 @@
   // ---------- websocket ----------
   let lastMsgAt = 0, ws;
   function applyState(s) {
+    if (s.cameras) renderTriggerBar(s.cameras);
     if (s.scenes) s.scenes.forEach(renderScene);
     if (s.scenes) renderMess(s.scenes);
     if (s.store) { renderVibe(s.store.vibe); renderBoards(s.store.leaderboards); }

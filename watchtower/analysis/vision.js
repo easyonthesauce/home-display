@@ -1,6 +1,9 @@
 const config = require('../config');
+const { createLogger } = require('../logger');
 const { getClient, responseText } = require('./client');
 const { sceneSchema, sceneSystem, rosterText } = require('./prompts');
+
+const log = createLogger('vision');
 
 const clampInt = (n, lo, hi, dflt) => {
   const v = Math.round(Number(n));
@@ -58,7 +61,14 @@ function mockScene(camera, frameCount) {
 
 async function analyzeScene(camera, frames) {
   const client = getClient();
-  if (!client || !frames || !frames.length) return mockScene(camera, frames ? frames.length : 0);
+  if (!client) {
+    log.warn(`no Anthropic client available (missing API key?) — returning mock scene for "${camera.name}"`);
+    return mockScene(camera, frames ? frames.length : 0);
+  }
+  if (!frames || !frames.length) {
+    log.warn(`no frames captured for "${camera.name}" — returning mock scene`);
+    return mockScene(camera, 0);
+  }
 
   const content = [];
   frames.forEach((buf, i) => {
@@ -71,6 +81,8 @@ async function analyzeScene(camera, frames) {
       + `These ${frames.length} frames were captured over ~${config.clipSeconds}s. Analyse them and return the JSON.`,
   });
 
+  const start = Date.now();
+  log.info(`analysing ${frames.length} frame(s) from "${camera.name}" with ${config.models.vision}`);
   try {
     const resp = await client.messages.create({
       model: config.models.vision,
@@ -79,10 +91,14 @@ async function analyzeScene(camera, frames) {
       system: sceneSystem,
       messages: [{ role: 'user', content }],
     });
+    log.debug(
+      `vision response for "${camera.name}" in ${Date.now() - start}ms: `
+      + `usage=${JSON.stringify(resp.usage || {})} stop_reason=${resp.stop_reason}`,
+    );
     const parsed = JSON.parse(responseText(resp));
     return sanitize(parsed, camera);
   } catch (e) {
-    console.warn(`[vision] ${camera.name}: ${e.message}`);
+    log.error(`vision analysis failed for "${camera.name}" after ${Date.now() - start}ms: ${e.message}`);
     const scene = mockScene(camera, frames.length);
     scene.notable_observations = [`Analysis error: ${e.message}`];
     return scene;

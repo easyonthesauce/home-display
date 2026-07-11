@@ -115,7 +115,8 @@ In each camera/NVR's **email alarm** settings:
 - **Recipient / subject:** include the camera's `trigger` keyword so the right
   camera is analysed (e.g. send kitchen alerts to `kitchen@watchtower.local`).
 
-Test without a camera:
+Test without a camera — either click the **trigger `<camera name>`** button
+that appears on the dashboard for each configured camera, or:
 
 ```bash
 curl -X POST "http://localhost:4000/api/trigger/test?camera=kitchen"
@@ -126,7 +127,7 @@ curl -X POST "http://localhost:4000/api/trigger/test?camera=kitchen"
 | Route | Purpose |
 | --- | --- |
 | `GET /api/state` | Current scenes, leaderboards, vibe, flags |
-| `POST /api/trigger/test?camera=<id>` | Manually fire a motion trigger |
+| `POST /api/trigger/test?camera=<id>` | Manually fire a motion trigger (also wired to the dashboard's per-camera trigger buttons) |
 | `POST /api/audio/loud` `{level}` | Start an audio-analysis session |
 | `POST /api/audio/level` `{level}` | Report ongoing loudness (0-100) |
 | `POST /api/audio/quiet` | End the audio session |
@@ -135,6 +136,28 @@ curl -X POST "http://localhost:4000/api/trigger/test?camera=kitchen"
 Event types (also delivered to `WATCH_WEBHOOKS`): `trigger`, `scene.update`,
 `audio.start` / `audio.update` / `audio.end`, `alert.child`, `alert.hazard`,
 `incident.recorded`, `capture.error`, `audio.error`.
+
+## Logging
+
+Every module (`server`, `capture`, `vision`, `escalation`, `audio`, `smtp`,
+`events`, `client`, `transcribe`) logs through a small leveled logger
+(`watchtower/logger.js`) with timestamps, e.g.:
+
+```
+14:02:11.482 INFO  [server] trigger received: camera="Kitchen" source=manual subject="manual test"
+14:02:11.483 INFO  [capture] capturing frames from rtsp://***@192.168.1.50:554/... (10s @ 0.8fps → target 8 frames)
+14:02:14.910 INFO  [capture] captured 8 frame(s) from "Kitchen" in 3427ms
+14:02:14.911 INFO  [vision] analysing 8 frame(s) from "Kitchen" with claude-opus-4-8
+14:02:17.203 INFO  [server] scene analysed for "Kitchen" in 2292ms: people=2 mess=3/10 vibe=68 child_risk=none hazards=0
+```
+
+Default level is `info` — trigger lifecycle, capture/analysis results and
+timings, audio session start/end, alerts, and connection events. Set
+`LOG_LEVEL=debug` (or `WATCH_VERBOSE=1`) in `.env` for everything: raw SMTP
+protocol lines, HTTP requests, WebSocket broadcasts, ffmpeg invocations, and
+Claude usage/timing on every call — noisy, but useful when a camera is flaky
+or an integration is misbehaving. RTSP URLs are credential-masked in all log
+output (`rtsp://***@host/...`).
 
 ## Notes & tuning
 

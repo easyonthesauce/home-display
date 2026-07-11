@@ -1,5 +1,8 @@
 const net = require('net');
 const { EventEmitter } = require('events');
+const { createLogger } = require('./logger');
+
+const log = createLogger('smtp');
 
 // A deliberately fake SMTP server. A consumer NVR / camera system configured to
 // "email on motion" will open an SMTP conversation with us; we speak just enough
@@ -12,6 +15,8 @@ function createSmtpTrigger({ port, bind, hostname }) {
   const emitter = new EventEmitter();
 
   const server = net.createServer((socket) => {
+    const peer = `${socket.remoteAddress}:${socket.remotePort}`;
+    log.info(`connection from ${peer}`);
     socket.setEncoding('utf8');
     let buffer = '';
     let inData = false;
@@ -19,7 +24,10 @@ function createSmtpTrigger({ port, bind, hostname }) {
     let authStep = null;                 // null | 'user' | 'pass'
     const session = { from: null, to: [] };
 
-    const write = (line) => { try { socket.write(line + '\r\n'); } catch { /* closed */ } };
+    const write = (line) => {
+      log.debug(`${peer} <- ${line}`);
+      try { socket.write(line + '\r\n'); } catch { /* closed */ }
+    };
     write(`220 ${hostname} ESMTP watchtower`);
 
     function finishData() {
@@ -28,6 +36,7 @@ function createSmtpTrigger({ port, bind, hostname }) {
       const subject = ((raw.match(/^subject:\s*(.*)$/im) || [])[1] || '').trim();
       dataLines = [];
       write('250 2.0.0 Ok: queued as trigger');
+      log.info(`${peer} completed DATA: from=${session.from} to=[${session.to.join(', ')}] subject="${subject}"`);
       emitter.emit('trigger', {
         from: session.from,
         to: session.to.slice(),
@@ -39,6 +48,7 @@ function createSmtpTrigger({ port, bind, hostname }) {
     }
 
     function handleLine(line) {
+      if (!inData) log.debug(`${peer} -> ${line}`);
       if (inData) {
         if (line === '.') return finishData();
         // SMTP dot-stuffing: a leading '.' on a body line is doubled.
@@ -111,7 +121,8 @@ function createSmtpTrigger({ port, bind, hostname }) {
         handleLine(line);
       }
     });
-    socket.on('error', () => { /* NVRs love to drop connections abruptly */ });
+    socket.on('close', () => log.debug(`${peer} disconnected`));
+    socket.on('error', (err) => log.debug(`${peer} socket error: ${err.message}`)); // NVRs love to drop connections abruptly
   });
 
   server.on('error', (err) => emitter.emit('error', err));
