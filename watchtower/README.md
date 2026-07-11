@@ -122,20 +122,37 @@ that appears on the dashboard for each configured camera, or:
 curl -X POST "http://localhost:4000/api/trigger/test?camera=kitchen"
 ```
 
+### 5. (Optional) Set up auto-trigger
+
+Each camera on the dashboard also has an **auto every ⎵s** control next to its
+trigger button — type an interval and click **set** to run a scene analysis on
+that camera automatically, on a repeating timer, independent of motion/SMTP.
+0 (or blank) disables it; a live "next in ⎵s" countdown shows when it'll next
+fire. Changes take effect immediately, no restart needed, and are visible to
+every connected dashboard.
+
+To set a starting default without touching the UI: `WATCH_AUTO_TRIGGER_SECONDS`
+in `.env` (applies to every camera), or `"autoTriggerSeconds": 300` on an
+individual camera in `cameras.json` (overrides the env default for that
+camera). Intervals below 15s are clamped up — a busy camera + Claude vision
+call every few seconds adds up fast in API cost.
+
 ## HTTP / event API
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/state` | Current scenes, leaderboards, vibe, flags |
+| `GET /api/state` | Current scenes, leaderboards, vibe, auto-trigger state, flags |
 | `POST /api/trigger/test?camera=<id>` | Manually fire a motion trigger (also wired to the dashboard's per-camera trigger buttons) |
+| `POST /api/trigger/auto?camera=<id>&seconds=<n>` | Set (`n>0`) or disable (`n=0`) a camera's periodic auto-trigger interval at runtime (also wired to the dashboard's per-camera auto control) |
 | `POST /api/audio/loud` `{level}` | Start an audio-analysis session |
 | `POST /api/audio/level` `{level}` | Report ongoing loudness (0-100) |
 | `POST /api/audio/quiet` | End the audio session |
 | `WS /ws` | Live event stream to the dashboard |
 
-Event types (also delivered to `WATCH_WEBHOOKS`): `trigger`, `scene.update`,
-`audio.start` / `audio.update` / `audio.end`, `alert.child`, `alert.hazard`,
-`incident.recorded`, `capture.error`, `audio.error`.
+Event types (also delivered to `WATCH_WEBHOOKS`): `trigger` (payload includes
+`source`: `smtp` / `manual` / `auto`), `scene.update`, `audio.start` /
+`audio.update` / `audio.end`, `alert.child`, `alert.hazard`,
+`incident.recorded`, `capture.error`, `audio.error`, `auto.updated`.
 
 ## Logging
 

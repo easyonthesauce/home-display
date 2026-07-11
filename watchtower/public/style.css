@@ -111,17 +111,35 @@ body {
 .board__list li span { color: var(--muted); font-size: 0.8rem; margin-left: 0.25rem; }
 .board__empty { color: var(--muted); font-size: 0.8rem; list-style: none; margin-left: -1.1rem; }
 
-/* Manual trigger bar */
-.trigger-bar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+/* Manual + auto trigger bar */
+.trigger-bar { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.trigger-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.35rem 0.5rem 0.35rem 0.35rem;
+}
 .trigger-btn {
-  background: var(--panel); color: var(--text); border: 1px solid var(--line);
-  border-radius: 10px; padding: 0.45rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.45rem 0.9rem; font-size: 0.85rem; cursor: pointer;
   display: flex; align-items: center; gap: 0.45rem; transition: 0.15s;
 }
 .trigger-btn:hover { border-color: var(--accent); color: var(--accent); }
 .trigger-btn:disabled { opacity: 0.5; cursor: wait; }
 .trigger-btn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .trigger-btn.busy .dot { background: var(--warn); animation: blink 0.8s steps(2, start) infinite; }
+
+.auto-wrap { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted); }
+.auto-input {
+  width: 4.2rem; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 6px; padding: 0.3rem 0.4rem; font-size: 0.85rem; font-variant-numeric: tabular-nums;
+}
+.auto-input:focus { outline: none; border-color: var(--accent); }
+.auto-apply {
+  background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.3rem 0.55rem; font-size: 0.78rem; cursor: pointer; transition: 0.15s;
+}
+.auto-apply:hover { border-color: var(--accent); color: var(--accent); }
+.auto-countdown { color: var(--good); font-variant-numeric: tabular-nums; min-width: 5.5rem; }
 
 /* Camera cards */
 .cameras { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; min-height: 0; overflow: auto; }

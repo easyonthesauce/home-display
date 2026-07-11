@@ -14,6 +14,7 @@ const { analyzeScene } = require('./analysis/vision');
 const { classifyEscalation } = require('./analysis/escalation');
 const { transcribe } = require('./analysis/transcribe');
 const { createAudioAnalyzer } = require('./analysis/audio');
+const { createAutoTriggerScheduler } = require('./auto-trigger');
 
 const log = createLogger('server');
 
@@ -107,6 +108,19 @@ async function handleTrigger(trigger, source) {
   }
 }
 
+// Periodic "auto" triggers, independent of motion/SMTP. Each camera gets its
+// own interval, set at startup from config and adjustable at runtime via
+// POST /api/trigger/auto (e.g. from the dashboard's per-camera control).
+const autoScheduler = createAutoTriggerScheduler({
+  cameras: config.cameras,
+  minSeconds: config.minAutoTriggerSeconds,
+  fire: (cameraId) => {
+    const cam = config.cameras.find((c) => c.id === cameraId);
+    if (!cam) return;
+    handleTrigger({ to: [cam.trigger], subject: 'auto trigger', from: 'scheduler' }, 'auto');
+  },
+});
+
 // When a raised-voices event ends, the people identifiable in the last scene of
 // the audio camera become the "offenders" for the name-and-shame board.
 bus.on('audio.end', (payload) => {
@@ -140,6 +154,8 @@ app.get('/api/state', (_req, res) => {
     store: store.snapshot(),
     audioActive: audio.isActive(),
     noise: latestNoise,
+    autoTriggers: autoScheduler.list(),
+    minAutoTriggerSeconds: config.minAutoTriggerSeconds,
     hasApiKey: config.hasApiKey,
     hasTranscriber: Boolean(config.transcribeCmd),
     at: Date.now(),
@@ -189,6 +205,29 @@ app.post('/api/trigger/test', (req, res) => {
   res.json({ ok: true, camera: target && target.name });
 });
 
+// Set (or disable, with seconds <= 0) a camera's periodic auto-trigger
+// interval at runtime — e.g. from the dashboard's per-camera control.
+app.post('/api/trigger/auto', (req, res) => {
+  const cameraId = req.query.camera || (req.body && req.body.camera);
+  const requestedSeconds = Number(req.query.seconds ?? (req.body && req.body.seconds));
+  if (!config.cameras.length) {
+    log.warn('auto-trigger update requested but no cameras are configured');
+    return res.status(503).json({ ok: false, error: 'no cameras configured' });
+  }
+  const cam = config.cameras.find((c) => c.id === cameraId);
+  if (!cam) {
+    log.warn(`auto-trigger update requested unknown camera id "${cameraId}"`);
+    return res.status(404).json({ ok: false, error: `unknown camera "${cameraId}"` });
+  }
+  if (!Number.isFinite(requestedSeconds)) {
+    return res.status(400).json({ ok: false, error: 'seconds must be a number (0 to disable)' });
+  }
+  const effective = autoScheduler.set(cam.id, requestedSeconds);
+  const entry = autoScheduler.get(cam.id);
+  bus.emit('auto.updated', { list: autoScheduler.list() });
+  res.json({ ok: true, camera: cam.name, seconds: effective, nextAt: entry.nextAt });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -202,6 +241,8 @@ wss.on('connection', (ws, req) => {
       scenes: Array.from(latestScenes.values()),
       store: store.snapshot(),
       audioActive: audio.isActive(),
+      autoTriggers: autoScheduler.list(),
+      minAutoTriggerSeconds: config.minAutoTriggerSeconds,
       hasApiKey: config.hasApiKey,
       hasTranscriber: Boolean(config.transcribeCmd),
     },
@@ -229,6 +270,10 @@ smtp.on('error', (err) => log.error(`SMTP server error: ${err.message}`));
 server.listen(config.port, () => {
   log.info(`dashboard on http://localhost:${config.port}`);
   log.info(`${config.cameras.length} camera(s) configured: ${config.cameras.map((c) => c.id).join(', ') || '(none)'}`);
+  const autoCams = config.cameras.filter((c) => c.autoTriggerSeconds > 0);
+  if (autoCams.length) {
+    log.info(`auto-trigger enabled: ${autoCams.map((c) => `${c.id}@${c.autoTriggerSeconds}s`).join(', ')}`);
+  }
   log.info(`models: vision=${config.models.vision} escalation=${config.models.escalation}`);
   log.info(`log level: ${process.env.LOG_LEVEL || (process.env.WATCH_VERBOSE === '1' ? 'debug' : 'info')} (set WATCH_VERBOSE=1 or LOG_LEVEL=debug for more)`);
   if (!config.hasApiKey) log.warn('no ANTHROPIC_API_KEY — running with mock analysis.');
@@ -237,6 +282,7 @@ server.listen(config.port, () => {
 
 function shutdown(signal) {
   log.info(`received ${signal} — shutting down`);
+  autoScheduler.stopAll();
   try { smtp.close(); } catch (e) { log.warn(`error closing SMTP server: ${e.message}`); }
   server.close(() => { log.info('shutdown complete'); process.exit(0); });
 }

@@ -24,14 +24,31 @@ function slug(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+// Minimum spacing between auto-triggers. Below this a misconfigured interval
+// would hammer the camera and burn Claude vision calls for no benefit.
+const MIN_AUTO_TRIGGER_SECONDS = 15;
+
+const defaultAutoTriggerSeconds = Math.max(
+  0, Number(process.env.WATCH_AUTO_TRIGGER_SECONDS || 0) || 0,
+);
+
 const rawCameras = readJsonEnvOrFile('WATCH_CAMERAS', 'cameras.json') || [];
-const cameras = rawCameras.map((c, i) => ({
-  id: c.id || slug(c.name) || `cam${i + 1}`,
-  name: c.name || c.id || `Camera ${i + 1}`,
-  rtsp: c.rtsp,
-  audio: c.audio !== false && Boolean(c.rtsp),   // assume audio unless told otherwise
-  trigger: (c.trigger || c.name || c.id || '').toLowerCase(),
-}));
+const cameras = rawCameras.map((c, i) => {
+  const requested = c.autoTriggerSeconds != null
+    ? Number(c.autoTriggerSeconds)
+    : defaultAutoTriggerSeconds;
+  const autoTriggerSeconds = requested > 0
+    ? Math.max(MIN_AUTO_TRIGGER_SECONDS, requested)
+    : 0;
+  return {
+    id: c.id || slug(c.name) || `cam${i + 1}`,
+    name: c.name || c.id || `Camera ${i + 1}`,
+    rtsp: c.rtsp,
+    audio: c.audio !== false && Boolean(c.rtsp),   // assume audio unless told otherwise
+    trigger: (c.trigger || c.name || c.id || '').toLowerCase(),
+    autoTriggerSeconds,
+  };
+});
 
 const roster = readJsonEnvOrFile('WATCH_ROSTER', 'roster.json') || [];
 
@@ -57,4 +74,5 @@ module.exports = {
   ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
   statePath: path.join(__dirname, 'state.json'),
   hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+  minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
 };
