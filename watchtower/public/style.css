@@ -52,6 +52,11 @@ body {
 }
 @keyframes blink { 50% { opacity: 0.35; } }
 
+.alexa-badge { gap: 0.4rem; }
+.alexa-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.alexa-badge .dot.connected { background: var(--good); box-shadow: 0 0 8px var(--good); }
+.alexa-badge .dot.disconnected, .alexa-badge .dot.unreachable { background: var(--bad); }
+
 /* Argument overlay */
 .arg {
   display: grid; grid-template-columns: auto 1fr; gap: 1.5rem;

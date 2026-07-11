@@ -52,6 +52,16 @@ const cameras = rawCameras.map((c, i) => {
 
 const roster = readJsonEnvOrFile('WATCH_ROSTER', 'roster.json') || [];
 
+// Alert rules: which events trigger an Alexa announcement, on which device,
+// with what message template and how often. See alerts.json.example.
+const rawAlerts = readJsonEnvOrFile('WATCH_ALERTS', 'alerts.json') || {};
+const alerts = {
+  enabled: rawAlerts.enabled !== false && process.env.ALEXA_ALERTS_ENABLED !== '0',
+  device: rawAlerts.device || process.env.ALEXA_DEFAULT_DEVICE || 'all',
+  cooldownSeconds: Number(rawAlerts.cooldownSeconds || process.env.ALEXA_DEFAULT_COOLDOWN_SECONDS || 120),
+  rules: Array.isArray(rawAlerts.rules) ? rawAlerts.rules : [],
+};
+
 module.exports = {
   port: Number(process.env.WATCH_PORT || 4000),
   smtp: {
@@ -75,4 +85,12 @@ module.exports = {
   statePath: path.join(__dirname, 'state.json'),
   hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
   minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
+  alexa: {
+    // The Alexa Bridge (github: local alexa-remote2-based announcement
+    // service) runs as its own process — it owns the Amazon login/cookie
+    // and exposes a small HTTP API. Watchtower is just a client of it.
+    url: (process.env.ALEXA_BRIDGE_URL || 'http://localhost:3000').replace(/\/$/, ''),
+    timeoutMs: Number(process.env.ALEXA_BRIDGE_TIMEOUT_MS || 8000),
+  },
+  alerts,
 };
