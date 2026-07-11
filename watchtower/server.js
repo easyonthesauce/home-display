@@ -17,11 +17,19 @@ const { createAudioAnalyzer } = require('./analysis/audio');
 const { createAutoTriggerScheduler } = require('./auto-trigger');
 const { createAlexaClient } = require('./alexa');
 const { createAlertRouter } = require('./alerts');
+const { createFaceStore } = require('./faces');
 
 const log = createLogger('server');
 
 const bus = createEventBus({ webhooks: config.webhooks, log: createLogger('events') });
 const store = createStore({ file: config.statePath });
+const faceStore = createFaceStore({ file: config.facesPath });
+const faceLog = createLogger('faces');
+
+// De-dupe recognition/greeting events so we don't spam the bus every frame the
+// same person is on camera. Keyed by person id -> last-emitted timestamp.
+const lastRecognized = new Map();
+const RECOGNITION_COOLDOWN_MS = 60000;
 
 // Alexa Bridge integration: a thin client to the sidecar service, plus the
 // alert-rule router that watches every bus event and fires announcements
@@ -165,12 +173,27 @@ bus.on('audio.end', (payload) => {
 
 // ---- HTTP + WebSocket ----
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));   // face descriptors are small but batched
 app.use((req, _res, next) => {
   log.debug(`${req.method} ${req.originalUrl}`);
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve the face-api browser library + model weights straight from the
+// installed package, so the dashboard can do all detection/embedding locally
+// (offline-capable, no CDN). No biometric data is involved here — just the
+// static ML model files.
+if (config.faces.enabled) {
+  try {
+    const faceApiDir = path.dirname(require.resolve('@vladmandic/face-api/package.json'));
+    app.use('/vendor/face-api/dist', express.static(path.join(faceApiDir, 'dist')));
+    app.use('/vendor/face-api/model', express.static(path.join(faceApiDir, 'model')));
+    log.info('face recognition enabled — serving face-api library + models from node_modules');
+  } catch (e) {
+    log.error(`FACES_ENABLED but @vladmandic/face-api is not installed: ${e.message}`);
+  }
+}
 
 app.get('/api/state', (_req, res) => {
   res.json({
@@ -187,6 +210,13 @@ app.get('/api/state', (_req, res) => {
       enabled: config.alerts.enabled && alertRouter.rules.length > 0,
       status: alexaStatus.status,
       ruleCount: alertRouter.rules.length,
+    },
+    faces: {
+      enabled: config.faces.enabled,
+      matchThreshold: config.faces.matchThreshold,
+      enrollSamples: config.faces.enrollSamples,
+      unknownDwellMs: config.faces.unknownDwellMs,
+      enrolledCount: faceStore.count(),
     },
     at: Date.now(),
   });
@@ -273,6 +303,76 @@ app.post('/api/alexa/test', async (req, res) => {
   }
 });
 
+// ── Face enrolment + recognition ────────────────────────────────────────────
+// All detection/embedding happens in the browser on the display's webcam; the
+// server only stores consented signatures and relays recognition events.
+function facesGuard(_req, res, next) {
+  if (!config.faces.enabled) return res.status(404).json({ ok: false, error: 'face recognition is disabled (set FACES_ENABLED=1)' });
+  next();
+}
+
+// List enrolled people (includes descriptors so the dashboard can match locally).
+app.get('/api/faces', facesGuard, (_req, res) => {
+  res.json({
+    enabled: true,
+    matchThreshold: config.faces.matchThreshold,
+    enrollSamples: config.faces.enrollSamples,
+    unknownDwellMs: config.faces.unknownDwellMs,
+    people: faceStore.list(),
+  });
+});
+
+// Enrol a new person. Requires an explicit consent flag — the dashboard only
+// sends this after the person agrees on the "have we met?" consent screen.
+app.post('/api/faces/enroll', facesGuard, (req, res) => {
+  const { name, descriptors, consent } = req.body || {};
+  if (consent !== true) {
+    return res.status(400).json({ ok: false, error: 'consent (boolean true) is required to enrol a face' });
+  }
+  try {
+    const person = faceStore.enroll({ name, descriptors, consent });
+    bus.emit('face.enrolled', { id: person.id, name: person.name, samples: person.sampleCount });
+    res.json({ ok: true, person });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// Add more samples to an existing person (improves accuracy over time).
+app.post('/api/faces/:id/samples', facesGuard, (req, res) => {
+  try {
+    const person = faceStore.addSamples(req.params.id, (req.body || {}).descriptors);
+    res.json({ ok: true, person });
+  } catch (e) {
+    res.status(e.message.includes('unknown') ? 404 : 400).json({ ok: false, error: e.message });
+  }
+});
+
+// Forget a person — deletes their stored signature entirely.
+app.delete('/api/faces/:id', facesGuard, (req, res) => {
+  const ok = faceStore.forget(req.params.id);
+  if (!ok) return res.status(404).json({ ok: false, error: 'not found' });
+  bus.emit('face.forgotten', { id: req.params.id });
+  res.json({ ok: true });
+});
+
+// The dashboard reports a recognised face here so the server can relay it (for
+// greetings, Alexa "welcome home" rules, webhooks), de-duped per person.
+app.post('/api/faces/recognized', facesGuard, (req, res) => {
+  const { id, name } = req.body || {};
+  if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
+  const key = id || name;
+  const now = Date.now();
+  const last = lastRecognized.get(key) || 0;
+  if (now - last > RECOGNITION_COOLDOWN_MS) {
+    lastRecognized.set(key, now);
+    faceLog.info(`recognised "${name}" at the display`);
+    bus.emit('face.recognized', { id, name });
+    return res.json({ ok: true, emitted: true });
+  }
+  res.json({ ok: true, emitted: false });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -294,6 +394,13 @@ wss.on('connection', (ws, req) => {
         enabled: config.alerts.enabled && alertRouter.rules.length > 0,
         status: alexaStatus.status,
         ruleCount: alertRouter.rules.length,
+      },
+      faces: {
+        enabled: config.faces.enabled,
+        matchThreshold: config.faces.matchThreshold,
+        enrollSamples: config.faces.enrollSamples,
+        unknownDwellMs: config.faces.unknownDwellMs,
+        enrolledCount: faceStore.count(),
       },
     },
     at: Date.now(),
@@ -334,6 +441,11 @@ server.listen(config.port, () => {
     log.info(`Alexa alerts enabled but no rules configured (bridge: ${config.alexa.url}) — see watchtower/alerts.json.example`);
   } else {
     log.info(`Alexa alerts: ${alertRouter.rules.length} rule(s) → ${config.alexa.url}`);
+  }
+  if (config.faces.enabled) {
+    log.info(`face recognition: ${faceStore.count()} person(s) enrolled, match threshold ${config.faces.matchThreshold}`);
+  } else {
+    log.info('face recognition disabled (set FACES_ENABLED=1 to enable enrolment on the display webcam)');
   }
 });
 

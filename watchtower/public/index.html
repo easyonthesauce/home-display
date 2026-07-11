@@ -16,6 +16,8 @@
       <div class="topbar__right">
         <div class="rec" id="rec-badge" hidden>● REC — listening</div>
         <button id="mic-btn" class="ghost-btn" title="Enable microphone listening">🎙 enable mic</button>
+        <button id="cam-btn" class="ghost-btn" hidden title="Enable webcam face recognition">👤 <span class="label">enable camera</span></button>
+        <button id="faces-manage-btn" class="ghost-btn" hidden title="Manage enrolled faces">Faces <span class="count">0</span></button>
         <button id="alexa-badge" class="ghost-btn alexa-badge" hidden title="Test Alexa announcement">
           <span class="dot" id="alexa-dot"></span><span>Alexa</span>
         </button>
@@ -23,6 +25,48 @@
         <button id="fullscreen-btn" class="ghost-btn" title="Fullscreen">⛶</button>
       </div>
     </header>
+
+    <!-- Face recognition offscreen video + a friendly greeting chip -->
+    <video id="face-video" playsinline muted style="display:none"></video>
+    <div id="face-greet" class="face-greet"></div>
+
+    <!-- "Have we met?" overlay — shown when an unknown face lingers at the display -->
+    <div id="face-overlay" class="face-overlay" hidden>
+      <div class="face-overlay__card">
+        <div class="face-overlay__wave">👋</div>
+        <h1>Have we met?</h1>
+        <p>I don't recognise you. Want to introduce yourself so I can say hello next time?</p>
+        <p class="face-overlay__fine">This saves a face signature <strong>on this device only</strong> — no photos, nothing leaves your home network. You can be forgotten any time.</p>
+        <div class="face-overlay__actions">
+          <button id="face-overlay-yes" class="btn-primary">Yes, let's do it</button>
+          <button id="face-overlay-no" class="btn-ghost">No thanks</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enrollment modal -->
+    <div id="enroll-modal" class="modal" hidden>
+      <div class="modal__card">
+        <video id="enroll-preview" class="enroll-preview" playsinline muted></video>
+        <div id="enroll-status" class="enroll-status">Look at the camera…</div>
+        <input id="enroll-name" class="enroll-name" type="text" placeholder="Your name" autocomplete="off" />
+        <div class="modal__actions">
+          <button id="enroll-save" class="btn-primary" disabled>Save</button>
+          <button id="enroll-cancel" class="btn-ghost">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manage enrolled faces -->
+    <div id="faces-modal" class="modal" hidden>
+      <div class="modal__card">
+        <h2>Enrolled faces</h2>
+        <ul id="faces-list" class="faces-list"></ul>
+        <div class="modal__actions">
+          <button id="faces-close" class="btn-ghost">Close</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Raised-voices overlay: appears only during a live audio event -->
     <section class="arg" id="arg-panel" hidden>
@@ -119,5 +163,6 @@
   </template>
 
   <script src="./app.js"></script>
+  <script src="./faces.js"></script>
 </body>
 </html>

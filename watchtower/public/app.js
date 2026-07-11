@@ -257,6 +257,8 @@
       case 'alexa.status': renderAlexaBadge({ enabled: true, status: msg.payload.status }); break;
       case 'alexa.announced': flashStatus(`🔊 Alexa: "${msg.payload.message}" → ${msg.payload.device}`); break;
       case 'alexa.error': flashStatus(`🔇 Alexa announcement failed: ${msg.payload.error}`); break;
+      case 'face.enrolled': flashStatus(`👤 enrolled ${msg.payload.name}`); break;
+      case 'face.forgotten': flashStatus('👤 a face was forgotten'); break;
     }
   }
 
@@ -300,6 +302,8 @@
     clearTimeout(flashTimer);
     flashTimer = setTimeout(() => { statusText.textContent = 'live'; }, 6000);
   }
+  // Let faces.js (a separate script) surface status toasts through the same line.
+  window.watchtowerFlash = flashStatus;
 
   // ---------- microphone loud-noise detection ----------
   // The kitchen display's own mic is a cheap always-on trigger. Crossing the loud
