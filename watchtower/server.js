@@ -15,11 +15,36 @@ const { classifyEscalation } = require('./analysis/escalation');
 const { transcribe } = require('./analysis/transcribe');
 const { createAudioAnalyzer } = require('./analysis/audio');
 const { createAutoTriggerScheduler } = require('./auto-trigger');
+const { createAlexaClient } = require('./alexa');
+const { createAlertRouter } = require('./alerts');
 
 const log = createLogger('server');
 
 const bus = createEventBus({ webhooks: config.webhooks, log: createLogger('events') });
 const store = createStore({ file: config.statePath });
+
+// Alexa Bridge integration: a thin client to the sidecar service, plus the
+// alert-rule router that watches every bus event and fires announcements
+// for the ones matching a configured rule. See watchtower/alerts.js and
+// alerts.json.example for the rule format.
+const alexaClient = createAlexaClient(config.alexa);
+const alertRouter = createAlertRouter({ config, bus, alexaClient });
+
+let alexaStatus = { status: 'unknown' };
+let alexaStatusTimer = null;
+async function refreshAlexaStatus() {
+  const previous = alexaStatus.status;
+  alexaStatus = await alexaClient.status();
+  if (alexaStatus.status !== previous) {
+    log.info(`Alexa Bridge status changed: ${previous} → ${alexaStatus.status}`);
+    bus.emit('alexa.status', alexaStatus);
+  }
+}
+if (config.alerts.enabled && config.alerts.rules.length) {
+  refreshAlexaStatus();
+  alexaStatusTimer = setInterval(refreshAlexaStatus, 30000);
+  alexaStatusTimer.unref();
+}
 
 // Most-recent scene per camera, so newly-connected dashboards and the /api/state
 // endpoint can render immediately without waiting for the next motion trigger.
@@ -158,6 +183,11 @@ app.get('/api/state', (_req, res) => {
     minAutoTriggerSeconds: config.minAutoTriggerSeconds,
     hasApiKey: config.hasApiKey,
     hasTranscriber: Boolean(config.transcribeCmd),
+    alexa: {
+      enabled: config.alerts.enabled && alertRouter.rules.length > 0,
+      status: alexaStatus.status,
+      ruleCount: alertRouter.rules.length,
+    },
     at: Date.now(),
   });
 });
@@ -228,6 +258,21 @@ app.post('/api/trigger/auto', (req, res) => {
   res.json({ ok: true, camera: cam.name, seconds: effective, nextAt: entry.nextAt });
 });
 
+// Send a one-off test announcement through the Alexa Bridge, bypassing the
+// alert rules entirely — for confirming the bridge is reachable and a
+// device name is spelled correctly before wiring up real rules.
+app.post('/api/alexa/test', async (req, res) => {
+  const message = (req.body && req.body.message) || 'This is a test announcement from Watchtower.';
+  const device = (req.body && req.body.device) || config.alerts.device;
+  log.info(`manual Alexa test: device="${device}" message="${message}"`);
+  try {
+    const result = await alexaClient.announce(message, device);
+    res.json({ ok: true, device, ...result });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -245,6 +290,11 @@ wss.on('connection', (ws, req) => {
       minAutoTriggerSeconds: config.minAutoTriggerSeconds,
       hasApiKey: config.hasApiKey,
       hasTranscriber: Boolean(config.transcribeCmd),
+      alexa: {
+        enabled: config.alerts.enabled && alertRouter.rules.length > 0,
+        status: alexaStatus.status,
+        ruleCount: alertRouter.rules.length,
+      },
     },
     at: Date.now(),
   }));
@@ -278,11 +328,19 @@ server.listen(config.port, () => {
   log.info(`log level: ${process.env.LOG_LEVEL || (process.env.WATCH_VERBOSE === '1' ? 'debug' : 'info')} (set WATCH_VERBOSE=1 or LOG_LEVEL=debug for more)`);
   if (!config.hasApiKey) log.warn('no ANTHROPIC_API_KEY — running with mock analysis.');
   if (!config.transcribeCmd) log.warn('no TRANSCRIBE_CMD — argument meter will track raw loudness only.');
+  if (!config.alerts.enabled) {
+    log.info('Alexa alerts disabled');
+  } else if (!alertRouter.rules.length) {
+    log.info(`Alexa alerts enabled but no rules configured (bridge: ${config.alexa.url}) — see watchtower/alerts.json.example`);
+  } else {
+    log.info(`Alexa alerts: ${alertRouter.rules.length} rule(s) → ${config.alexa.url}`);
+  }
 });
 
 function shutdown(signal) {
   log.info(`received ${signal} — shutting down`);
   autoScheduler.stopAll();
+  if (alexaStatusTimer) clearInterval(alexaStatusTimer);
   try { smtp.close(); } catch (e) { log.warn(`error closing SMTP server: ${e.message}`); }
   server.close(() => { log.info('shutdown complete'); process.exit(0); });
 }

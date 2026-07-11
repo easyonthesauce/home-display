@@ -235,6 +235,7 @@
     if (s.scenes) renderMess(s.scenes);
     if (s.store) { renderVibe(s.store.vibe); renderBoards(s.store.leaderboards); }
     showArg(Boolean(s.audioActive));
+    if (s.alexa) renderAlexaBadge(s.alexa);
     statusText.textContent = s.hasApiKey ? 'live' : 'live (mock analysis — no API key)';
   }
   function handle(msg) {
@@ -253,8 +254,34 @@
       case 'trigger':
         if (msg.payload.source === 'auto') flashStatus(`auto-trigger fired: ${msg.payload.camera}`);
         break;
+      case 'alexa.status': renderAlexaBadge({ enabled: true, status: msg.payload.status }); break;
+      case 'alexa.announced': flashStatus(`🔊 Alexa: "${msg.payload.message}" → ${msg.payload.device}`); break;
+      case 'alexa.error': flashStatus(`🔇 Alexa announcement failed: ${msg.payload.error}`); break;
     }
   }
+
+  // ---------- Alexa badge ----------
+  const alexaBadge = $('alexa-badge');
+  const alexaDot = $('alexa-dot');
+  function renderAlexaBadge(info) {
+    if (!info || !info.enabled) { alexaBadge.hidden = true; return; }
+    alexaBadge.hidden = false;
+    alexaDot.className = `dot ${info.status || 'unknown'}`;
+    alexaBadge.title = `Alexa Bridge: ${info.status || 'unknown'} — click to send a test announcement`;
+  }
+  alexaBadge.addEventListener('click', async () => {
+    alexaBadge.disabled = true;
+    flashStatus('sending test Alexa announcement…');
+    try {
+      const res = await fetch('/api/alexa/test', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) flashStatus(`Alexa test failed: ${body.error || res.status}`);
+    } catch (e) {
+      flashStatus(`Alexa test failed: ${e.message}`);
+    } finally {
+      setTimeout(() => { alexaBadge.disabled = false; }, 1500);
+    }
+  });
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws`);

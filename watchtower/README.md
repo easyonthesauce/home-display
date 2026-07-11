@@ -137,22 +137,76 @@ individual camera in `cameras.json` (overrides the env default for that
 camera). Intervals below 15s are clamped up — a busy camera + Claude vision
 call every few seconds adds up fast in API cost.
 
+### 6. (Optional) Set up Alexa announcements
+
+Watchtower can announce alerts through Alexa devices — "things sound heated
+in the kitchen", "a hazard was spotted", whatever you configure — by talking
+to a small **sidecar service** called Alexa Bridge. Watchtower doesn't log
+into Amazon itself; the bridge owns that (via `alexa-remote2`) and exposes a
+local HTTP API (`POST /announce`), and Watchtower is just a client of it. Run
+the bridge as its own process (see its own setup — it needs your Amazon
+account cookie in its `.env`, never Watchtower's), then:
+
+```bash
+cp watchtower/alerts.json.example watchtower/alerts.json
+# edit alerts.json: which events announce, on which device, how often
+```
+
+```
+# .env
+ALEXA_BRIDGE_URL=http://localhost:3000   # wherever the bridge is running
+ALEXA_ALERTS_ENABLED=1
+```
+
+Each rule in `alerts.json` maps a Watchtower **event** to a spoken
+**message**, with optional conditions and a per-rule cooldown so a busy
+kitchen doesn't turn into a nagging speaker:
+
+```json
+{
+  "id": "argument",
+  "event": "incident.recorded",
+  "when": { "peak": { "gte": 70 } },
+  "message": "Things sound heated in the kitchen. Everything okay?",
+  "device": "Kitchen Echo",
+  "cooldownSeconds": 300
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `id` | ✅ | Unique — used to track this rule's own cooldown |
+| `event` | ✅ | Which Watchtower event fires this rule — see the event list below |
+| `when` | ❌ | Conditions on the event payload, all must match. A field maps to: an array (value must be one of these), `{gte:N}` / `{lte:N}` / `{eq:v}` / `{neq:v}`, or an exact value. Dot paths work (`child_wellbeing.risk_level`). Omit for "always match". |
+| `message` | ✅ | Spoken text. `{{field}}` / `{{nested.field}}` pull values from the event payload; arrays are joined into a readable list. |
+| `device` | ❌ | Device name, serial, or `"all"` to broadcast. Falls back to the top-level `device` in `alerts.json`, then `ALEXA_DEFAULT_DEVICE`. |
+| `cooldownSeconds` | ❌ | Minimum gap between firings of *this rule*. Falls back to the top-level `cooldownSeconds`, then `ALEXA_DEFAULT_COOLDOWN_SECONDS`. |
+| `enabled` | ❌ | Set `false` to keep a rule in the file but turn it off. |
+
+See `alerts.json.example` for more worked examples (child-safety, hazards, a
+messy kitchen, disabled motion-detected). Click the **Alexa** badge in the
+top-right of the dashboard (appears once alerts are enabled) to fire a test
+announcement and confirm the bridge is reachable — the dot is green when
+connected, red when not.
+
 ## HTTP / event API
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/state` | Current scenes, leaderboards, vibe, auto-trigger state, flags |
+| `GET /api/state` | Current scenes, leaderboards, vibe, auto-trigger state, Alexa status, flags |
 | `POST /api/trigger/test?camera=<id>` | Manually fire a motion trigger (also wired to the dashboard's per-camera trigger buttons) |
 | `POST /api/trigger/auto?camera=<id>&seconds=<n>` | Set (`n>0`) or disable (`n=0`) a camera's periodic auto-trigger interval at runtime (also wired to the dashboard's per-camera auto control) |
 | `POST /api/audio/loud` `{level}` | Start an audio-analysis session |
 | `POST /api/audio/level` `{level}` | Report ongoing loudness (0-100) |
 | `POST /api/audio/quiet` | End the audio session |
+| `POST /api/alexa/test` `{message?, device?}` | Fire a one-off test announcement, bypassing the alert rules (also wired to the dashboard's Alexa badge) |
 | `WS /ws` | Live event stream to the dashboard |
 
-Event types (also delivered to `WATCH_WEBHOOKS`): `trigger` (payload includes
-`source`: `smtp` / `manual` / `auto`), `scene.update`, `audio.start` /
-`audio.update` / `audio.end`, `alert.child`, `alert.hazard`,
-`incident.recorded`, `capture.error`, `audio.error`, `auto.updated`.
+Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
+`trigger` (payload includes `source`: `smtp` / `manual` / `auto`),
+`scene.update`, `audio.start` / `audio.update` / `audio.end`, `alert.child`,
+`alert.hazard`, `incident.recorded`, `capture.error`, `audio.error`,
+`auto.updated`, `alexa.status`, `alexa.announced`, `alexa.error`.
 
 ## Logging
 

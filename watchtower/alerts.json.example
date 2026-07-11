@@ -1,0 +1,53 @@
+{
+  "enabled": true,
+
+  "device": "all",
+  "cooldownSeconds": 120,
+
+  "rules": [
+    {
+      "id": "child-risk",
+      "event": "alert.child",
+      "when": { "risk_level": ["elevated", "high"] },
+      "message": "Attention: {{risk_level}} child safety concern on the {{camera}} camera. {{notes}}",
+      "device": "all",
+      "cooldownSeconds": 60
+    },
+
+    {
+      "id": "hazard",
+      "event": "alert.hazard",
+      "message": "Warning: a hazard was spotted on the {{camera}} camera — {{risks}}.",
+      "device": "all",
+      "cooldownSeconds": 300
+    },
+
+    {
+      "id": "argument",
+      "event": "incident.recorded",
+      "when": { "peak": { "gte": 70 } },
+      "message": "Things sound heated in the kitchen. Everything okay?",
+      "device": "Kitchen Echo",
+      "cooldownSeconds": 300
+    },
+
+    {
+      "id": "very-messy",
+      "event": "scene.update",
+      "when": { "mess_score": { "gte": 8 } },
+      "message": "The {{camera}} is looking pretty messy right now — might be worth a tidy up.",
+      "device": "Kitchen Echo",
+      "cooldownSeconds": 1800
+    },
+
+    {
+      "id": "motion-detected",
+      "event": "trigger",
+      "when": { "source": "smtp" },
+      "message": "Motion detected on the {{camera}} camera.",
+      "device": "all",
+      "cooldownSeconds": 60,
+      "enabled": false
+    }
+  ]
+}
