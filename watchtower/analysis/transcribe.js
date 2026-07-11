@@ -1,5 +1,8 @@
 const { exec } = require('child_process');
 const config = require('../config');
+const { createLogger } = require('../logger');
+
+const log = createLogger('transcribe');
 
 // Pluggable speech-to-text. Runs whatever command TRANSCRIBE_CMD names, passing
 // it a WAV path, and reads the transcript from stdout. Kept local by design —
@@ -16,9 +19,15 @@ function transcribe(wavPath) {
     const cmd = config.transcribeCmd.includes('{file}')
       ? config.transcribeCmd.replace(/\{file\}/g, JSON.stringify(wavPath))
       : `${config.transcribeCmd} ${JSON.stringify(wavPath)}`;
+    const start = Date.now();
+    log.debug(`running transcriber on ${wavPath}`);
     exec(cmd, { timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-      if (err) { console.warn(`[transcribe] ${err.message}`); return resolve(null); }
+      if (err) {
+        log.warn(`transcriber failed after ${Date.now() - start}ms: ${err.message}`);
+        return resolve(null);
+      }
       const text = String(stdout || '').trim();
+      log.debug(`transcriber finished in ${Date.now() - start}ms: ${text ? `${text.length} chars` : '(empty)'}`);
       resolve(text || null);
     });
   });
