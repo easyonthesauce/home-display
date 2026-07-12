@@ -1,6 +1,6 @@
 const config = require('../config');
 const { createLogger } = require('../logger');
-const { getClient, responseText } = require('./client');
+const { getProvider } = require('./providers');
 const { escalationSchema, escalationSystem } = require('./prompts');
 
 const log = createLogger('escalation');
@@ -17,11 +17,11 @@ const clamp = (n, lo, hi, dflt) => {
 // transcriber configured) so the meter still tracks raw loudness.
 async function classifyEscalation(transcriptWindow, noiseFallback = 0) {
   const hasText = transcriptWindow && transcriptWindow.trim() && transcriptWindow !== '(no transcript available)';
-  const client = getClient();
+  const provider = getProvider(config);
 
-  if (!client || !hasText) {
+  if (!provider.available() || !hasText) {
     const level = clamp(noiseFallback, 0, 100, 0);
-    log.debug(`fallback path: hasClient=${Boolean(client)} hasText=${Boolean(hasText)} noise=${level}`);
+    log.debug(`fallback path: providerAvailable=${provider.available()} hasText=${Boolean(hasText)} noise=${level}`);
     return {
       escalation: level,
       trend: 'stable',
@@ -31,16 +31,16 @@ async function classifyEscalation(transcriptWindow, noiseFallback = 0) {
   }
 
   const start = Date.now();
-  log.debug(`classifying escalation with ${config.models.escalation} (transcript window: ${transcriptWindow.length} chars)`);
+  log.debug(`classifying escalation with ${provider.name}:${config.models.escalation} (transcript window: ${transcriptWindow.length} chars)`);
   try {
-    const resp = await client.messages.create({
+    const resp = await provider.complete({
       model: config.models.escalation,
-      max_tokens: 400,
-      output_config: { format: { type: 'json_schema', schema: escalationSchema } },
+      maxTokens: 400,
       system: escalationSystem,
-      messages: [{ role: 'user', content: `Recent transcript (oldest first, newest last):\n"""\n${transcriptWindow}\n"""\n\nReturn the JSON.` }],
+      prompt: `Recent transcript (oldest first, newest last):\n"""\n${transcriptWindow}\n"""\n\nReturn the JSON.`,
+      schema: escalationSchema,
     });
-    const raw = JSON.parse(responseText(resp));
+    const raw = JSON.parse(resp.text);
     const result = {
       escalation: clamp(raw.escalation, 0, 100, noiseFallback),
       trend: ['escalating', 'stable', 'de-escalating'].includes(raw.trend) ? raw.trend : 'stable',
