@@ -231,6 +231,12 @@ app.get('/api/state', (_req, res) => {
     minAutoTriggerSeconds: config.minAutoTriggerSeconds,
     hasApiKey: config.hasApiKey,
     hasTranscriber: Boolean(config.transcribeCmd),
+    llm: {
+      provider: config.llm.provider,
+      visionModel: config.models.vision,
+      escalationModel: config.models.escalation,
+      available: config.hasApiKey,
+    },
     alexa: {
       enabled: config.alerts.enabled && alertRouter.rules.length > 0,
       status: alexaStatus.status,
@@ -558,6 +564,12 @@ wss.on('connection', (ws, req) => {
       minAutoTriggerSeconds: config.minAutoTriggerSeconds,
       hasApiKey: config.hasApiKey,
       hasTranscriber: Boolean(config.transcribeCmd),
+      llm: {
+        provider: config.llm.provider,
+        visionModel: config.models.vision,
+        escalationModel: config.models.escalation,
+        available: config.hasApiKey,
+      },
       alexa: {
         enabled: config.alerts.enabled && alertRouter.rules.length > 0,
         status: alexaStatus.status,
@@ -610,9 +622,9 @@ server.listen(config.port, () => {
   if (autoCams.length) {
     log.info(`auto-trigger enabled: ${autoCams.map((c) => `${c.id}@${c.autoTriggerSeconds}s`).join(', ')}`);
   }
-  log.info(`models: vision=${config.models.vision} escalation=${config.models.escalation}`);
+  log.info(`LLM provider: ${config.llm.provider} — vision=${config.models.vision} escalation=${config.models.escalation}`);
   log.info(`log level: ${process.env.LOG_LEVEL || (process.env.WATCH_VERBOSE === '1' ? 'debug' : 'info')} (set WATCH_VERBOSE=1 or LOG_LEVEL=debug for more)`);
-  if (!config.hasApiKey) log.warn('no ANTHROPIC_API_KEY — running with mock analysis.');
+  if (!config.hasApiKey) log.warn(`no API key for LLM_PROVIDER=${config.llm.provider} — running with mock analysis.`);
   if (!config.transcribeCmd) log.warn('no TRANSCRIBE_CMD — argument meter will track raw loudness only.');
   if (!config.alerts.enabled) {
     log.info('Alexa alerts disabled');
