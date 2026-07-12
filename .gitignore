@@ -11,3 +11,4 @@ watchtower/alerts.json
 watchtower/state.json
 # Enrolled face signatures — biometric data, never commit
 watchtower/faces.json
+watchtower/water.json

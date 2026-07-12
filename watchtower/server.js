@@ -18,6 +18,9 @@ const { createAutoTriggerScheduler } = require('./auto-trigger');
 const { createAlexaClient } = require('./alexa');
 const { createAlertRouter } = require('./alerts');
 const { createFaceStore } = require('./faces');
+const { createWaterStore } = require('./water');
+const { createEsp32Client } = require('./esp32');
+const { createPourManager } = require('./water-pour');
 
 const log = createLogger('server');
 
@@ -25,6 +28,11 @@ const bus = createEventBus({ webhooks: config.webhooks, log: createLogger('event
 const store = createStore({ file: config.statePath });
 const faceStore = createFaceStore({ file: config.facesPath });
 const faceLog = createLogger('faces');
+
+// Water challenge: participant/consumption store + ESP32 dispenser + pour mgr.
+const waterStore = createWaterStore({ file: config.waterPath, dailyGoalMl: config.water.dailyGoalMl });
+const esp32 = createEsp32Client({ url: config.water.esp32Url, timeoutMs: config.water.esp32TimeoutMs });
+const pourManager = createPourManager({ config, store: waterStore, esp32, emit: bus.emit });
 
 // De-dupe recognition/greeting events so we don't spam the bus every frame the
 // same person is on camera. Keyed by person id -> last-emitted timestamp.
@@ -218,6 +226,11 @@ app.get('/api/state', (_req, res) => {
       unknownDwellMs: config.faces.unknownDwellMs,
       enrolledCount: faceStore.count(),
     },
+    water: {
+      enabled: config.water.enabled,
+      participants: waterStore.count(),
+      hardware: esp32.configured,
+    },
     at: Date.now(),
   });
 });
@@ -373,6 +386,81 @@ app.post('/api/faces/recognized', facesGuard, (req, res) => {
   res.json({ ok: true, emitted: false });
 });
 
+// ── Water challenge ─────────────────────────────────────────────────────────
+function waterGuard(_req, res, next) {
+  if (!config.water.enabled) return res.status(404).json({ ok: false, error: 'the water challenge is disabled (set WATER_ENABLED=1)' });
+  next();
+}
+
+// Computed view for a period, plus the active pour session + hardware state.
+app.get('/api/water', waterGuard, (req, res) => {
+  const view = waterStore.view(req.query.period);
+  res.json({
+    enabled: true,
+    ...view,
+    session: pourManager.snapshot(),
+    maxPourMl: config.water.maxPourMl,
+    hardware: { configured: esp32.configured },
+  });
+});
+
+// Join the challenge / re-opt-in by name.
+app.post('/api/water/participants', waterGuard, (req, res) => {
+  try {
+    const p = waterStore.addParticipant((req.body || {}).name);
+    bus.emit('water.changed', { reason: 'participant-added', id: p.id, name: p.name });
+    res.json({ ok: true, participant: p });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// Opt a participant in/out.
+app.post('/api/water/participants/:id/opt', waterGuard, (req, res) => {
+  try {
+    const p = waterStore.setOptIn(req.params.id, (req.body || {}).optedIn !== false);
+    bus.emit('water.changed', { reason: 'opt-changed', id: p.id });
+    res.json({ ok: true, participant: p });
+  } catch (e) {
+    res.status(404).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/water/participants/:id', waterGuard, (req, res) => {
+  const ok = waterStore.removeParticipant(req.params.id);
+  if (!ok) return res.status(404).json({ ok: false, error: 'not found' });
+  bus.emit('water.changed', { reason: 'participant-removed', id: req.params.id });
+  res.json({ ok: true });
+});
+
+// Press "Drink": start a pour for the active drinker.
+app.post('/api/water/pour/start', waterGuard, async (req, res) => {
+  const userId = (req.body || {}).userId;
+  if (!userId) return res.status(400).json({ ok: false, error: 'userId is required (tap your lane first)' });
+  try {
+    const session = await pourManager.start(userId);
+    res.json({ ok: true, session });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// Press "Drink" again (or explicit stop): finish the pour and record it.
+app.post('/api/water/pour/stop', waterGuard, async (req, res) => {
+  const result = await pourManager.stop('user');
+  if (!result) return res.status(409).json({ ok: false, error: 'no pour in progress' });
+  res.json({ ok: true, ...result });   // water.dispensed -> water.changed is emitted by the pour manager
+});
+
+// The ESP32 reports cumulative flow (ml) for the active pour session.
+app.post('/api/water/flow', waterGuard, (req, res) => {
+  const { ml, sessionId } = req.body || {};
+  res.json(pourManager.reportFlow(ml, sessionId));
+});
+
+// When a pour finishes, tell every dashboard to refresh its water view.
+bus.on('water.dispensed', () => bus.emit('water.changed', { reason: 'dispensed' }));
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -401,6 +489,11 @@ wss.on('connection', (ws, req) => {
         enrollSamples: config.faces.enrollSamples,
         unknownDwellMs: config.faces.unknownDwellMs,
         enrolledCount: faceStore.count(),
+      },
+      water: {
+        enabled: config.water.enabled,
+        participants: waterStore.count(),
+        hardware: esp32.configured,
       },
     },
     at: Date.now(),
@@ -447,12 +540,19 @@ server.listen(config.port, () => {
   } else {
     log.info('face recognition disabled (set FACES_ENABLED=1 to enable enrolment on the display webcam)');
   }
+  if (config.water.enabled) {
+    log.info(`water challenge: ${waterStore.count()} participant(s), goal ${config.water.dailyGoalMl}ml/day, dispenser ${esp32.configured ? config.water.esp32Url : 'MOCK (no ESP32 configured)'}`);
+  } else {
+    log.info('water challenge disabled (set WATER_ENABLED=1 to enable the hydration page)');
+  }
 });
 
 function shutdown(signal) {
   log.info(`received ${signal} — shutting down`);
   autoScheduler.stopAll();
   if (alexaStatusTimer) clearInterval(alexaStatusTimer);
+  // Safety: never leave the pump running across a restart.
+  if (pourManager.isActive()) { log.warn('pour in progress at shutdown — stopping pump'); pourManager.stop('shutdown'); }
   try { smtp.close(); } catch (e) { log.warn(`error closing SMTP server: ${e.message}`); }
   server.close(() => { log.info('shutdown complete'); process.exit(0); });
 }

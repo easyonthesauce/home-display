@@ -68,6 +68,9 @@
       </div>
     </div>
 
+    <div class="pages" id="pages">
+    <section class="page active" data-page="watch">
+
     <!-- Raised-voices overlay: appears only during a live audio event -->
     <section class="arg" id="arg-panel" hidden>
       <div class="arg__meter">
@@ -142,8 +145,66 @@
 
     <section class="cameras" id="camera-grid"></section>
 
+    </section><!-- /page watch -->
+
+    <!-- Water Challenge page -->
+    <section class="page water-page" data-page="water" hidden>
+      <header class="water-head">
+        <div class="water-title">💧 Water Challenge</div>
+        <div class="water-periods" id="water-periods"></div>
+        <button id="water-join" class="ghost-btn" title="Join the challenge">＋ join</button>
+      </header>
+
+      <div class="water-lanes" id="water-lanes"></div>
+
+      <div class="water-controls">
+        <button id="water-drink" class="drink-btn" disabled>
+          <span class="drink-btn__drop">💧</span>
+          <span class="drink-btn__label">Drink</span>
+          <span class="drink-btn__ml" id="drink-ml"></span>
+        </button>
+        <div class="water-hint" id="water-hint">tap your lane, then press Drink</div>
+      </div>
+
+      <div class="water-leaderboard">
+        <div class="board__title board__title--water">🏆 Leaderboard</div>
+        <ol id="water-board" class="board__list"></ol>
+      </div>
+    </section>
+    </div><!-- /pages -->
+
+    <nav class="page-nav" id="page-nav"></nav>
+
     <footer class="footer"><span id="status-text">connecting…</span></footer>
   </main>
+
+  <!-- Shared SVG defs (the water fill gradient, referenced by every droplet) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="water-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#7fe9ff" /><stop offset="100%" stop-color="#0e7490" />
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <!-- Swimlane template -->
+  <template id="lane-tpl">
+    <div class="lane" data-id="">
+      <svg class="lane__drop" viewBox="0 0 120 150" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <clipPath class="lane__clip"><path d="M60 8 C60 8 105 70 105 100 A45 45 0 1 1 15 100 C15 70 60 8 60 8 Z"/></clipPath>
+        </defs>
+        <g class="lane__fillg">
+          <rect class="lane__water" x="0" y="150" width="120" height="0"/>
+        </g>
+        <path class="lane__outline" d="M60 8 C60 8 105 70 105 100 A45 45 0 1 1 15 100 C15 70 60 8 60 8 Z" fill="none"/>
+        <text class="lane__pct" x="60" y="105" text-anchor="middle">0%</text>
+      </svg>
+      <div class="lane__name" data-f="name"></div>
+      <div class="lane__total"><b data-f="total">0</b> ml <span class="lane__trend" data-f="trend"></span></div>
+      <div class="lane__rank" data-f="rank"></div>
+    </div>
+  </template>
 
   <template id="camera-tpl">
     <article class="cam">
@@ -164,5 +225,7 @@
 
   <script src="./app.js"></script>
   <script src="./faces.js"></script>
+  <script src="./water.js"></script>
+  <script src="./pages.js"></script>
 </body>
 </html>

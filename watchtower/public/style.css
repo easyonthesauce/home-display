@@ -23,11 +23,25 @@ body {
 }
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;   /* topbar · pages · nav · footer */
   gap: 1rem;
   height: 100vh;
   padding: 1rem clamp(0.75rem, 2vw, 2rem);
 }
+
+/* Page carousel */
+.pages { min-height: 0; position: relative; }
+.page { height: 100%; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 1rem; }
+.page[hidden] { display: none; }
+.page .cameras, .page .water-lanes { flex: 1; min-height: 0; }
+
+.page-nav { display: flex; justify-content: center; gap: 0.6rem; }
+.page-nav[hidden] { display: none; }
+.page-dot {
+  width: 10px; height: 10px; border-radius: 50%; padding: 0; cursor: pointer;
+  background: var(--line); border: 1px solid var(--line); transition: 0.2s;
+}
+.page-dot.on { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent); }
 
 .topbar { display: flex; align-items: center; justify-content: space-between; }
 .brand {
@@ -272,3 +286,68 @@ body {
   border-radius: 12px; padding: 0.8rem 1.4rem; font-size: 1.05rem; cursor: pointer;
 }
 .btn-ghost:hover { color: var(--text); border-color: var(--accent); }
+
+/* ── Water Challenge page ──────────────────────────────────────────────────── */
+.water-page {
+  background: radial-gradient(1000px 500px at 50% -10%, rgba(34,211,238,0.08), transparent 60%);
+}
+.water-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.water-title { font-size: 1.3rem; font-weight: 700; letter-spacing: 0.02em; }
+.water-periods { display: flex; gap: 0.4rem; flex: 1; flex-wrap: wrap; }
+.period-btn {
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 0.35rem 0.8rem; font-size: 0.8rem; cursor: pointer; transition: 0.15s;
+}
+.period-btn.on { color: var(--accent); border-color: var(--accent); background: rgba(34,211,238,0.1); }
+
+.water-lanes {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem; align-content: start; overflow: auto;
+}
+.lane {
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--line); border-radius: 16px; padding: 1rem 0.75rem;
+  display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
+  cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.lane.selected { border-color: var(--accent); box-shadow: 0 0 30px rgba(34,211,238,0.18); }
+.lane__drop { width: 100%; max-width: 130px; height: auto; }
+.lane__water { fill: url(#water-grad); }
+.lane__outline { stroke: var(--accent); stroke-width: 3; opacity: 0.7; }
+.lane__pct { fill: var(--text); font-size: 22px; font-weight: 300; font-variant-numeric: tabular-nums; }
+.lane__water { transition: y 0.8s ease, height 0.8s ease; }
+.lane__name { font-weight: 600; }
+.lane__total { color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.lane__total b { color: var(--text); }
+.lane__trend.up { color: var(--good); }
+.lane__trend.down { color: var(--bad); }
+.lane__trend.flat { color: var(--muted); }
+.lane__rank { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.1em; }
+
+.water-controls { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+.drink-btn {
+  width: clamp(120px, 20vh, 180px); height: clamp(120px, 20vh, 180px); border-radius: 50%;
+  border: none; cursor: pointer; color: #052430;
+  background: radial-gradient(circle at 50% 35%, #7fe9ff 0%, var(--accent) 45%, #0e7490 100%);
+  box-shadow: 0 0 50px rgba(34,211,238,0.4), inset 0 -10px 30px rgba(0,0,0,0.25);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.1rem;
+  transition: transform 0.1s, box-shadow 0.3s;
+  animation: drink-pulse 2.4s ease-in-out infinite;
+}
+.drink-btn:active { transform: scale(0.95); }
+.drink-btn:disabled { filter: grayscale(0.6) brightness(0.7); cursor: not-allowed; animation: none; }
+.drink-btn__drop { font-size: clamp(2rem, 6vh, 3.2rem); line-height: 1; }
+.drink-btn__label { font-size: clamp(1rem, 2.4vh, 1.4rem); font-weight: 700; letter-spacing: 0.04em; }
+.drink-btn__ml { font-size: 0.85rem; font-variant-numeric: tabular-nums; min-height: 1em; }
+.drink-btn.pouring {
+  background: radial-gradient(circle at 50% 35%, #ffd27f 0%, var(--warn) 45%, #b45309 100%);
+  animation: drink-pour 0.9s ease-in-out infinite;
+}
+@keyframes drink-pulse { 0%,100% { box-shadow: 0 0 40px rgba(34,211,238,0.35), inset 0 -10px 30px rgba(0,0,0,0.25); } 50% { box-shadow: 0 0 70px rgba(34,211,238,0.6), inset 0 -10px 30px rgba(0,0,0,0.25); } }
+@keyframes drink-pour { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+.water-hint { color: var(--muted); font-size: 0.85rem; }
+
+.water-leaderboard {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 0.75rem 1rem;
+}
+.board__title--water { color: var(--accent); }
