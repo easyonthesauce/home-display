@@ -21,6 +21,8 @@ const { createFaceStore } = require('./faces');
 const { createWaterStore } = require('./water');
 const { createEsp32Client } = require('./esp32');
 const { createPourManager } = require('./water-pour');
+const { createDiaryStore, createDriveClient } = require('./diary');
+const multer = require('multer');
 
 const log = createLogger('server');
 
@@ -33,6 +35,21 @@ const faceLog = createLogger('faces');
 const waterStore = createWaterStore({ file: config.waterPath, dailyGoalMl: config.water.dailyGoalMl });
 const esp32 = createEsp32Client({ url: config.water.esp32Url, timeoutMs: config.water.esp32TimeoutMs });
 const pourManager = createPourManager({ config, store: waterStore, esp32, emit: bus.emit });
+
+// Dear Diary: local index of every recorded entry, plus (if configured) a
+// Google Drive client that actually uploads the video and keeps a manifest
+// file in the Drive folder in sync.
+const diaryStore = createDiaryStore({ file: config.diaryPath });
+const diaryDrive = config.diary.enabled
+  ? createDriveClient({ serviceAccountJson: config.diary.drive.serviceAccountJson, folderId: config.diary.drive.folderId })
+  : null;
+if (config.diary.enabled && !diaryDrive) {
+  log.warn('DIARY_ENABLED but Google Drive is not configured (set GOOGLE_DRIVE_FOLDER_ID + GOOGLE_SERVICE_ACCOUNT_JSON) — entries will only be kept locally');
+}
+const diaryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 300 * 1024 * 1024 },
+});
 
 // De-dupe recognition/greeting events so we don't spam the bus every frame the
 // same person is on camera. Keyed by person id -> last-emitted timestamp.
@@ -236,6 +253,12 @@ app.get('/api/state', (_req, res) => {
       enabled: config.water.enabled,
       participants: waterStore.count(),
       hardware: esp32.configured,
+    },
+    diary: {
+      enabled: config.diary.enabled,
+      wakeWord: config.diary.wakeWord,
+      driveConfigured: Boolean(diaryDrive),
+      entryCount: diaryStore.count(),
     },
     at: Date.now(),
   });
@@ -467,6 +490,63 @@ app.post('/api/water/flow', waterGuard, (req, res) => {
 // When a pour finishes, tell every dashboard to refresh its water view.
 bus.on('water.dispensed', () => bus.emit('water.changed', { reason: 'dispensed' }));
 
+// ── Dear Diary ───────────────────────────────────────────────────────────────
+function diaryGuard(_req, res, next) {
+  if (!config.diary.enabled) return res.status(404).json({ ok: false, error: 'Dear Diary is disabled (set DIARY_ENABLED=1)' });
+  next();
+}
+
+// Config + recent entries for the diary page (wake word, suggestions, limits).
+app.get('/api/diary', diaryGuard, (_req, res) => {
+  res.json({
+    enabled: true,
+    wakeWord: config.diary.wakeWord,
+    countdownSeconds: config.diary.countdownSeconds,
+    maxSeconds: config.diary.maxSeconds,
+    suggestions: config.diary.suggestions,
+    driveConfigured: Boolean(diaryDrive),
+    entries: diaryStore.list(20),
+  });
+});
+
+// The display finished recording an entry: store it (Drive if configured,
+// always locally), update the Drive manifest, and tell the dashboard.
+app.post('/api/diary/upload', diaryGuard, diaryUpload.single('video'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'video file is required' });
+
+  const durationSec = Math.round(Number(req.body && req.body.durationSec)) || null;
+  const recordedAt = (req.body && req.body.recordedAt && !Number.isNaN(Date.parse(req.body.recordedAt)))
+    ? new Date(req.body.recordedAt)
+    : new Date();
+  const stamp = recordedAt.toISOString().replace(/[:.]/g, '-');
+  const ext = /mp4/.test(req.file.mimetype) ? 'mp4' : 'webm';
+  const filename = `${stamp}_dear-diary.${ext}`;
+
+  log.info(`diary entry received: ${filename} (${req.file.size} bytes, ${durationSec ?? '?'}s)`);
+  try {
+    let driveFileId = null;
+    let driveLink = null;
+    if (diaryDrive) {
+      const uploaded = await diaryDrive.upload({ filename, mimeType: req.file.mimetype, buffer: req.file.buffer });
+      driveFileId = uploaded.id;
+      driveLink = uploaded.webViewLink || null;
+      log.info(`uploaded "${filename}" to Drive (id=${driveFileId})`);
+    }
+    const entry = diaryStore.add({
+      filename, driveFileId, driveLink, durationSec, recordedAt: recordedAt.toISOString(),
+    });
+    if (diaryDrive) {
+      diaryDrive.writeIndex(config.diary.drive.indexFileName, diaryStore.list())
+        .catch((e) => log.warn(`failed to update Drive index: ${e.message}`));
+    }
+    bus.emit('diary.recorded', entry);
+    res.json({ ok: true, entry, savedToDrive: Boolean(diaryDrive) });
+  } catch (e) {
+    log.error(`diary upload failed for "${filename}": ${e.message}`);
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -506,6 +586,12 @@ wss.on('connection', (ws, req) => {
         enabled: config.water.enabled,
         participants: waterStore.count(),
         hardware: esp32.configured,
+      },
+      diary: {
+        enabled: config.diary.enabled,
+        wakeWord: config.diary.wakeWord,
+        driveConfigured: Boolean(diaryDrive),
+        entryCount: diaryStore.count(),
       },
     },
     at: Date.now(),
@@ -556,6 +642,11 @@ server.listen(config.port, () => {
     log.info(`water challenge: ${waterStore.count()} participant(s), goal ${config.water.dailyGoalMl}ml/day, dispenser ${esp32.configured ? config.water.esp32Url : 'MOCK (no ESP32 configured)'}`);
   } else {
     log.info('water challenge disabled (set WATER_ENABLED=1 to enable the hydration page)');
+  }
+  if (config.diary.enabled) {
+    log.info(`Dear Diary: wake word "${config.diary.wakeWord}", ${diaryStore.count()} entr${diaryStore.count() === 1 ? 'y' : 'ies'} recorded, Drive ${diaryDrive ? 'configured' : 'NOT configured (local only)'}`);
+  } else {
+    log.info('Dear Diary disabled (set DIARY_ENABLED=1 to enable the video-diary page)');
   }
 });
 

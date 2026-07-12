@@ -119,6 +119,8 @@ module.exports = {
   statePath: path.join(__dirname, 'state.json'),
   facesPath: path.join(__dirname, 'faces.json'),
   waterPath: path.join(__dirname, 'water.json'),
+  diaryPath: path.join(__dirname, 'diary.json'),
+  hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
   hasApiKey: llmHasApiKey,
   minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
   faces: {
@@ -157,5 +159,40 @@ module.exports = {
     esp32TimeoutMs: Number(process.env.WATER_ESP32_TIMEOUT_MS || 4000),
     // Simulated flow rate used only in mock mode.
     mockFlowMlPerSec: Number(process.env.WATER_MOCK_FLOW_ML_PER_SEC || 50),
+  },
+  diary: {
+    // "Dear Diary" — wake-word-activated video diary entries, uploaded to
+    // Google Drive. Off by default; needs a wake word to listen for and (to
+    // actually save anything) a Drive folder shared with a service account.
+    enabled: process.env.DIARY_ENABLED === '1' || process.env.DIARY_ENABLED === 'true',
+    wakeWord: (process.env.DIARY_WAKE_WORD || 'dear diary').toLowerCase(),
+    // How long the big countdown dot counts down before recording starts.
+    countdownSeconds: Number(process.env.DIARY_COUNTDOWN_SECONDS || 5),
+    // Hard cap on a single entry's length.
+    maxSeconds: Number(process.env.DIARY_MAX_SECONDS || 60),
+    // Prompts shown on screen while recording, for anyone stuck on what to say.
+    // Pipe-separated in the env var, e.g. "What did you do today?|Tell a joke".
+    suggestions: process.env.DIARY_SUGGESTIONS
+      ? process.env.DIARY_SUGGESTIONS.split('|').map((s) => s.trim()).filter(Boolean)
+      : [
+        'What did you do today?',
+        'How are you feeling?',
+        'Tell a joke, or tell a story',
+        'Show something interesting',
+        'What made you laugh today?',
+        'What are you looking forward to?',
+      ],
+    drive: {
+      // The Drive folder entries get uploaded into. Share it with the service
+      // account's client_email (from the JSON key below) as an Editor.
+      folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+      // Full service-account JSON key, inline (see README for how to create
+      // one). Without this + folderId, entries are still recorded locally
+      // but never leave the device.
+      serviceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
+      // Manifest file kept alongside the videos in the Drive folder, listing
+      // every entry (filename, link, timestamp, duration) for easy browsing.
+      indexFileName: process.env.GOOGLE_DRIVE_INDEX_FILENAME || 'dear-diary-index.json',
+    },
   },
 };
