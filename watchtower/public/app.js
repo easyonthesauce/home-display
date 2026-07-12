@@ -236,7 +236,9 @@
     if (s.store) { renderVibe(s.store.vibe); renderBoards(s.store.leaderboards); }
     showArg(Boolean(s.audioActive));
     if (s.alexa) renderAlexaBadge(s.alexa);
-    statusText.textContent = s.hasApiKey ? 'live' : 'live (mock analysis — no API key)';
+    statusText.textContent = s.hasApiKey
+      ? `live (${(s.llm && s.llm.provider) || 'anthropic'})`
+      : 'live (mock analysis — no LLM provider configured)';
   }
   // Other page scripts (water.js) can subscribe to the shared WS stream.
   const subscribers = [];

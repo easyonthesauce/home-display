@@ -24,6 +24,26 @@ function slug(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+const { isLocalUrl } = require('./analysis/providers/openai');
+
+// Which LLM backend powers vision + escalation analysis. "openai" also covers
+// any OpenAI-compatible endpoint (Azure OpenAI, Ollama, LM Studio, vLLM,
+// Groq, OpenRouter, ...) via OPENAI_BASE_URL.
+const llmProvider = (process.env.LLM_PROVIDER || 'anthropic').toLowerCase();
+
+// Model IDs are provider-specific, so pick sane per-provider defaults —
+// VISION_MODEL/ESCALATION_MODEL still override either way.
+const MODEL_DEFAULTS = {
+  anthropic: { vision: 'claude-opus-4-8', escalation: 'claude-haiku-4-5' },
+  openai: { vision: 'gpt-4o', escalation: 'gpt-4o-mini' },
+};
+const modelDefaults = MODEL_DEFAULTS[llmProvider] || MODEL_DEFAULTS.anthropic;
+
+const openaiBaseUrl = process.env.OPENAI_BASE_URL || '';
+const llmHasApiKey = llmProvider === 'openai' || llmProvider === 'openai-compatible'
+  ? Boolean(process.env.OPENAI_API_KEY) || isLocalUrl(openaiBaseUrl)
+  : Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+
 // Minimum spacing between auto-triggers. Below this a misconfigured interval
 // would hammer the camera and burn Claude vision calls for no benefit.
 const MIN_AUTO_TRIGGER_SECONDS = 15;
@@ -77,15 +97,29 @@ module.exports = {
   audioCameraId: process.env.WATCH_AUDIO_CAMERA || (cameras[0] && cameras[0].id) || null,
   webhooks: (process.env.WATCH_WEBHOOKS || '').split(',').map((s) => s.trim()).filter(Boolean),
   models: {
-    vision: process.env.VISION_MODEL || 'claude-opus-4-8',
-    escalation: process.env.ESCALATION_MODEL || 'claude-haiku-4-5',
+    vision: process.env.VISION_MODEL || modelDefaults.vision,
+    escalation: process.env.ESCALATION_MODEL || modelDefaults.escalation,
+  },
+  llm: {
+    provider: llmProvider,
+    anthropic: {
+      apiKey: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || '',
+    },
+    openai: {
+      apiKey: process.env.OPENAI_API_KEY || '',
+      // Empty -> api.openai.com. Set to point at Azure OpenAI, Ollama, LM
+      // Studio, vLLM, Groq, OpenRouter, or any other OpenAI-compatible
+      // /chat/completions endpoint.
+      baseUrl: openaiBaseUrl,
+      timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 30000),
+    },
   },
   transcribeCmd: process.env.TRANSCRIBE_CMD || '',
   ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
   statePath: path.join(__dirname, 'state.json'),
   facesPath: path.join(__dirname, 'faces.json'),
   waterPath: path.join(__dirname, 'water.json'),
-  hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+  hasApiKey: llmHasApiKey,
   minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
   faces: {
     // Face enrolment + recognition on the display's own webcam. Off by default;

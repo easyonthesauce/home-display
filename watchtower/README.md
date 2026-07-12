@@ -47,22 +47,28 @@ but two things keep it on the right side of the line:
                                                    │
                                     ffmpeg grabs ~10s of frames
                                                    │
-                                    Claude (vision) → scene JSON
+                                    LLM provider (vision) → scene JSON
                                                    │
              ┌─────────────── event bus ───────────┴─────────────┐
         WebSocket → kitchen dashboard          webhooks      leaderboards/state
 
  Kitchen display mic hears a loud noise ──▶ /api/audio/loud ──▶ audio session:
-   ffmpeg pulls RTSP audio → local transcribe → Claude (escalation) → arg-u-meter
+   ffmpeg pulls RTSP audio → local transcribe → LLM provider (escalation) → arg-u-meter
 ```
 
 - **`smtp-trigger.js`** — a fake SMTP server. Your NVR thinks it's emailing a
   motion alert; we just use the connection as a trigger. Nothing is relayed.
 - **`capture.js`** — `ffmpeg` pulls frames (and audio clips) over RTSP.
-- **`analysis/vision.js`** — sends the frames to Claude with a strict JSON
-  schema: people count, who (from your roster), what they're doing, notable
-  observations, a mess score, child-wellbeing risk, environment hazards, a vibe
-  score, and a per-person effort score.
+- **`analysis/providers/`** — the LLM backend is swappable (`LLM_PROVIDER`):
+  `anthropic` (Claude) or `openai` (OpenAI, or any OpenAI-compatible endpoint —
+  Azure OpenAI, Ollama, LM Studio, vLLM, Groq, OpenRouter, ...). Both
+  `vision.js` and `escalation.js` call `getProvider(config)` instead of any
+  SDK directly, so changing providers is a config change, not a code change.
+  See **Choosing an LLM provider** below.
+- **`analysis/vision.js`** — sends the frames to the active provider with a
+  strict JSON schema: people count, who (from your roster), what they're
+  doing, notable observations, a mess score, child-wellbeing risk, environment
+  hazards, a vibe score, and a per-person effort score.
 - **`analysis/audio.js` + `escalation.js`** — during a raised-voices event,
   captures rolling audio clips, transcribes them locally, and scores the
   escalation with a fast model to drive the arg-u-meter and worm.
@@ -74,9 +80,10 @@ but two things keep it on the right side of the line:
 ### 1. Prerequisites
 
 - **Node ≥ 18** and **ffmpeg** on the machine (a NAS, a mini-PC, a Pi 4+).
-- An **Anthropic API key** (`ANTHROPIC_API_KEY`). Optional but needed for real
-  analysis — without it everything runs with mock data so you can wire up
-  cameras first.
+- An **LLM provider** — an Anthropic API key (default), an OpenAI API key, or
+  a local/self-hosted OpenAI-compatible server (Ollama, LM Studio, ...). See
+  **Choosing an LLM provider** below. Optional but needed for real analysis —
+  without one, everything runs with mock data so you can wire up cameras first.
 - (Optional) a local **speech-to-text** binary for transcription, e.g.
   [`whisper.cpp`](https://github.com/ggerganov/whisper.cpp).
 
@@ -304,14 +311,14 @@ Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
 ## Logging
 
 Every module (`server`, `capture`, `vision`, `escalation`, `audio`, `smtp`,
-`events`, `client`, `transcribe`) logs through a small leveled logger
+`events`, `llm`, `transcribe`) logs through a small leveled logger
 (`watchtower/logger.js`) with timestamps, e.g.:
 
 ```
 14:02:11.482 INFO  [server] trigger received: camera="Kitchen" source=manual subject="manual test"
 14:02:11.483 INFO  [capture] capturing frames from rtsp://***@192.168.1.50:554/... (10s @ 0.8fps → target 8 frames)
 14:02:14.910 INFO  [capture] captured 8 frame(s) from "Kitchen" in 3427ms
-14:02:14.911 INFO  [vision] analysing 8 frame(s) from "Kitchen" with claude-opus-4-8
+14:02:14.911 INFO  [vision] analysing 8 frame(s) from "Kitchen" with anthropic:claude-opus-4-8
 14:02:17.203 INFO  [server] scene analysed for "Kitchen" in 2292ms: people=2 mess=3/10 vibe=68 child_risk=none hazards=0
 ```
 
@@ -323,11 +330,45 @@ Claude usage/timing on every call — noisy, but useful when a camera is flaky
 or an integration is misbehaving. RTSP URLs are credential-masked in all log
 output (`rtsp://***@host/...`).
 
+## Choosing an LLM provider
+
+Set `LLM_PROVIDER` in `.env`:
+
+| `LLM_PROVIDER` | Uses | Auth |
+| --- | --- | --- |
+| `anthropic` (default) | Claude | `ANTHROPIC_API_KEY` |
+| `openai` | OpenAI, or **any** OpenAI-compatible `/chat/completions` endpoint | `OPENAI_API_KEY` + optional `OPENAI_BASE_URL` |
+
+`openai` isn't just OpenAI's own API — pointing `OPENAI_BASE_URL` at a
+different host covers Azure OpenAI, and self-hosted/local servers that speak
+the same wire protocol: [Ollama](https://ollama.com) (`http://localhost:11434/v1`),
+[LM Studio](https://lmstudio.ai) (`http://localhost:1234/v1`), vLLM, Groq,
+OpenRouter, together.ai, and more. Local servers usually need no API key at
+all — leave `OPENAI_API_KEY` blank.
+
+Both `vision.js` (needs a vision-capable model) and `escalation.js` (wants a
+fast/cheap model) go through the same provider, so pick model IDs that suit
+each role for whichever backend you choose:
+
+```
+# .env — self-hosted example
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:11434/v1
+VISION_MODEL=llama3.2-vision
+ESCALATION_MODEL=llama3.2:1b
+```
+
+Leave `VISION_MODEL` / `ESCALATION_MODEL` unset to get sensible per-provider
+defaults (`claude-opus-4-8` / `claude-haiku-4-5` for Anthropic, `gpt-4o` /
+`gpt-4o-mini` for OpenAI). The active provider and models are logged at
+startup and shown in `GET /api/state` under `llm`.
+
+To add another provider, drop a new file in `watchtower/analysis/providers/`
+implementing `{ name, available(), complete({model, maxTokens, system, prompt,
+images?, schema?}) }` and wire it into `providers/index.js`'s `getProvider()`.
+
 ## Notes & tuning
 
-- **Model choice.** Vision runs once per motion trigger (`VISION_MODEL`,
-  default `claude-opus-4-8`). Escalation runs every few seconds during an
-  argument, so it defaults to the faster `claude-haiku-4-5`. Both are env-configurable.
 - **No transcriber?** The arg-u-meter still works — it tracks raw loudness from
   the display mic instead of transcript sentiment. Add `TRANSCRIBE_CMD` for the
   full transcription + escalation experience.

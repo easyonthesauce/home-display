@@ -1,6 +1,6 @@
 const config = require('../config');
 const { createLogger } = require('../logger');
-const { getClient, responseText } = require('./client');
+const { getProvider } = require('./providers');
 const { sceneSchema, sceneSystem, rosterText } = require('./prompts');
 
 const log = createLogger('vision');
@@ -49,8 +49,8 @@ function mockScene(camera, frameCount) {
     activities: [],
     notable_observations: [
       config.hasApiKey
-        ? 'Analysis unavailable — check the Anthropic API key / model.'
-        : `Mock analysis (${frameCount} frames captured). Set ANTHROPIC_API_KEY for real analysis.`,
+        ? `Analysis unavailable — check the ${config.llm.provider} API key / model.`
+        : `Mock analysis (${frameCount} frames captured). Configure an LLM provider (LLM_PROVIDER, API key) for real analysis.`,
     ],
     mess_score: 0,
     child_wellbeing: { risk_level: 'none', notes: '' },
@@ -60,9 +60,9 @@ function mockScene(camera, frameCount) {
 }
 
 async function analyzeScene(camera, frames) {
-  const client = getClient();
-  if (!client) {
-    log.warn(`no Anthropic client available (missing API key?) — returning mock scene for "${camera.name}"`);
+  const provider = getProvider(config);
+  if (!provider.available()) {
+    log.warn(`no LLM provider available (${config.llm.provider}, missing API key?) — returning mock scene for "${camera.name}"`);
     return mockScene(camera, frames ? frames.length : 0);
   }
   if (!frames || !frames.length) {
@@ -70,32 +70,30 @@ async function analyzeScene(camera, frames) {
     return mockScene(camera, 0);
   }
 
-  const content = [];
-  frames.forEach((buf, i) => {
-    content.push({ type: 'text', text: `Frame ${i + 1} of ${frames.length}:` });
-    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buf.toString('base64') } });
-  });
-  content.push({
-    type: 'text',
-    text: `Camera: ${camera.name}.\nHousehold roster:\n${rosterText(config.roster)}\n\n`
-      + `These ${frames.length} frames were captured over ~${config.clipSeconds}s. Analyse them and return the JSON.`,
-  });
+  const images = frames.map((buf, i) => ({
+    mediaType: 'image/jpeg',
+    base64: buf.toString('base64'),
+    caption: `Frame ${i + 1} of ${frames.length}:`,
+  }));
+  const prompt = `Camera: ${camera.name}.\nHousehold roster:\n${rosterText(config.roster)}\n\n`
+    + `These ${frames.length} frames were captured over ~${config.clipSeconds}s, in order. Analyse them and return the JSON.`;
 
   const start = Date.now();
-  log.info(`analysing ${frames.length} frame(s) from "${camera.name}" with ${config.models.vision}`);
+  log.info(`analysing ${frames.length} frame(s) from "${camera.name}" with ${provider.name}:${config.models.vision}`);
   try {
-    const resp = await client.messages.create({
+    const resp = await provider.complete({
       model: config.models.vision,
-      max_tokens: 4000,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: sceneSchema } },
+      maxTokens: 4000,
       system: sceneSystem,
-      messages: [{ role: 'user', content }],
+      prompt,
+      images,
+      schema: sceneSchema,
     });
     log.debug(
       `vision response for "${camera.name}" in ${Date.now() - start}ms: `
-      + `usage=${JSON.stringify(resp.usage || {})} stop_reason=${resp.stop_reason}`,
+      + `usage=${JSON.stringify(resp.usage || {})} stop_reason=${resp.stopReason}`,
     );
-    const parsed = JSON.parse(responseText(resp));
+    const parsed = JSON.parse(resp.text);
     return sanitize(parsed, camera);
   } catch (e) {
     log.error(`vision analysis failed for "${camera.name}" after ${Date.now() - start}ms: ${e.message}`);
