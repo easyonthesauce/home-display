@@ -83,8 +83,22 @@ module.exports = {
   transcribeCmd: process.env.TRANSCRIBE_CMD || '',
   ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
   statePath: path.join(__dirname, 'state.json'),
+  facesPath: path.join(__dirname, 'faces.json'),
   hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
   minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
+  faces: {
+    // Face enrolment + recognition on the display's own webcam. Off by default;
+    // it's a biometric feature, so it's opt-in.
+    enabled: process.env.FACES_ENABLED === '1' || process.env.FACES_ENABLED === 'true',
+    // Euclidean distance below which a live face is considered a match to an
+    // enrolled one. Lower = stricter. face-api's typical sweet spot is ~0.5.
+    matchThreshold: Number(process.env.FACES_MATCH_THRESHOLD || 0.5),
+    // How many good samples to capture during enrolment.
+    enrollSamples: Number(process.env.FACES_ENROLL_SAMPLES || 5),
+    // How long an unknown face must linger (ms) before the "have we met?"
+    // overlay appears — so passers-by and guests aren't prompted instantly.
+    unknownDwellMs: Number(process.env.FACES_UNKNOWN_DWELL_MS || 4000),
+  },
   alexa: {
     // The Alexa Bridge (github: local alexa-remote2-based announcement
     // service) runs as its own process — it owns the Amazon login/cookie

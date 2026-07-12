@@ -48,6 +48,14 @@
       "device": "all",
       "cooldownSeconds": 60,
       "enabled": false
+    },
+
+    {
+      "id": "welcome-home",
+      "event": "face.recognized",
+      "message": "Welcome home, {{name}}.",
+      "device": "Kitchen Echo",
+      "cooldownSeconds": 600
     }
   ]
 }

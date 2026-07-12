@@ -184,29 +184,77 @@ kitchen doesn't turn into a nagging speaker:
 | `enabled` | ❌ | Set `false` to keep a rule in the file but turn it off. |
 
 See `alerts.json.example` for more worked examples (child-safety, hazards, a
-messy kitchen, disabled motion-detected). Click the **Alexa** badge in the
-top-right of the dashboard (appears once alerts are enabled) to fire a test
-announcement and confirm the bridge is reachable — the dot is green when
-connected, red when not.
+messy kitchen, disabled motion-detected, and a "welcome home" rule that
+fires on face recognition). Click the **Alexa** badge in the top-right of the
+dashboard (appears once alerts are enabled) to fire a test announcement and
+confirm the bridge is reachable — the dot is green when connected, red when not.
+
+### 7. (Optional) Face enrolment + recognition
+
+The display can recognise enrolled household members from its **own webcam**
+and greet an unrecognised person with a **"Have we met?"** prompt that offers
+a consent-based enrolment. It's off by default (it's biometric) — enable with
+`FACES_ENABLED=1`.
+
+**How it's built to stay private:**
+
+- All face detection and embedding runs **in the browser** on the display,
+  using a local copy of `@vladmandic/face-api` (library + model weights served
+  from `node_modules`, so it works offline — no CDN, no cloud).
+- Only **128-number face signatures** are ever produced — never photos. A
+  signature is **only stored after the person explicitly consents** on the
+  "Have we met?" screen; the live unknown-face detection that decides whether
+  to prompt is ephemeral and never uploaded or saved.
+- Signatures live in `watchtower/faces.json` on the server, on your LAN, and
+  are `.gitignore`d. Enrolled people can be reviewed and **forgotten** any time
+  from the **Faces** button on the dashboard.
+- A guest who taps **No thanks** isn't prompted again for the rest of that
+  session, and unknown faces must linger for `FACES_UNKNOWN_DWELL_MS` (default
+  4s) before the prompt appears — so passers-by aren't nagged.
+
+**Enable it:**
+
+```
+# .env
+FACES_ENABLED=1
+```
+
+Then open the dashboard, click **👤 enable camera** once (a browser gesture is
+required for webcam access), and stand in view. Known faces get a "👋 Hi Name"
+greeting; a new face triggers the enrolment flow.
+
+> ⚠️ **Browsers only allow webcam access over HTTPS or on `localhost`.** For a
+> wall display, run the display's browser on the same machine as the server and
+> point it at `http://localhost:4000`, or serve Watchtower over HTTPS. (The
+> microphone feature has the same requirement.)
+
+Recognising a known face emits a `face.recognized` event, so you can pair it
+with the Alexa alerts — see the `welcome-home` rule in `alerts.json.example`.
 
 ## HTTP / event API
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/state` | Current scenes, leaderboards, vibe, auto-trigger state, Alexa status, flags |
+| `GET /api/state` | Current scenes, leaderboards, vibe, auto-trigger state, Alexa + faces status, flags |
 | `POST /api/trigger/test?camera=<id>` | Manually fire a motion trigger (also wired to the dashboard's per-camera trigger buttons) |
 | `POST /api/trigger/auto?camera=<id>&seconds=<n>` | Set (`n>0`) or disable (`n=0`) a camera's periodic auto-trigger interval at runtime (also wired to the dashboard's per-camera auto control) |
 | `POST /api/audio/loud` `{level}` | Start an audio-analysis session |
 | `POST /api/audio/level` `{level}` | Report ongoing loudness (0-100) |
 | `POST /api/audio/quiet` | End the audio session |
 | `POST /api/alexa/test` `{message?, device?}` | Fire a one-off test announcement, bypassing the alert rules (also wired to the dashboard's Alexa badge) |
+| `GET /api/faces` | List enrolled people (with signatures, for local matching) — 404 if faces are disabled |
+| `POST /api/faces/enroll` `{name, descriptors, consent}` | Enrol a person (requires `consent: true`) |
+| `POST /api/faces/:id/samples` `{descriptors}` | Add more samples to an enrolled person |
+| `DELETE /api/faces/:id` | Forget (delete) an enrolled person's signature |
+| `POST /api/faces/recognized` `{id, name}` | Dashboard reports a recognised face; relayed (de-duped) as a `face.recognized` event |
 | `WS /ws` | Live event stream to the dashboard |
 
 Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
 `trigger` (payload includes `source`: `smtp` / `manual` / `auto`),
 `scene.update`, `audio.start` / `audio.update` / `audio.end`, `alert.child`,
 `alert.hazard`, `incident.recorded`, `capture.error`, `audio.error`,
-`auto.updated`, `alexa.status`, `alexa.announced`, `alexa.error`.
+`auto.updated`, `alexa.status`, `alexa.announced`, `alexa.error`,
+`face.recognized`, `face.enrolled`, `face.forgotten`.
 
 ## Logging
 

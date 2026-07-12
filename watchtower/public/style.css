@@ -187,3 +187,88 @@ body {
   .meters .boards { grid-column: 1 / -1; }
   .arg { grid-template-columns: 1fr; }
 }
+
+/* ── Face recognition ─────────────────────────────────────────────────────── */
+#faces-manage-btn .count {
+  background: var(--panel-2); border-radius: 999px; padding: 0 0.4rem;
+  margin-left: 0.2rem; font-variant-numeric: tabular-nums;
+}
+
+/* Friendly greeting chip when a known face is seen */
+.face-greet {
+  position: fixed; top: 4.5rem; left: 50%; transform: translateX(-50%) translateY(-20px);
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--good); color: var(--text);
+  padding: 0.6rem 1.4rem; border-radius: 999px; font-size: 1.3rem; font-weight: 600;
+  box-shadow: 0 0 30px rgba(52,211,153,0.25);
+  opacity: 0; pointer-events: none; transition: opacity 0.4s, transform 0.4s; z-index: 40;
+}
+.face-greet.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Full-screen "Have we met?" overlay */
+.face-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(7, 8, 13, 0.82); backdrop-filter: blur(6px);
+}
+.face-overlay__card {
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--accent); border-radius: 24px;
+  padding: clamp(1.5rem, 4vw, 3rem); max-width: 640px; text-align: center;
+  box-shadow: 0 0 80px rgba(34,211,238,0.2);
+}
+.face-overlay__wave { font-size: clamp(3rem, 10vw, 6rem); animation: wave 1.6s ease-in-out infinite; }
+@keyframes wave { 0%,100% { transform: rotate(-8deg); } 50% { transform: rotate(14deg); } }
+.face-overlay__card h1 { font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 200; margin: 0.5rem 0; }
+.face-overlay__card p { color: var(--text); font-size: 1.15rem; margin: 0.6rem 0; }
+.face-overlay__fine { color: var(--muted); font-size: 0.95rem !important; }
+.face-overlay__actions { display: flex; gap: 1rem; justify-content: center; margin-top: 1.5rem; flex-wrap: wrap; }
+
+/* Modals (enrolment + manage) */
+.modal {
+  position: fixed; inset: 0; z-index: 61;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(7, 8, 13, 0.82); backdrop-filter: blur(6px);
+}
+.modal__card {
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--line); border-radius: 20px; padding: 1.5rem;
+  width: min(460px, 92vw); text-align: center;
+}
+.modal__card h2 { font-weight: 300; margin: 0 0 1rem; }
+.modal__actions { display: flex; gap: 0.75rem; justify-content: center; margin-top: 1.25rem; }
+.enroll-preview {
+  width: 240px; height: 180px; object-fit: cover; border-radius: 14px;
+  background: #000; border: 1px solid var(--line); transform: scaleX(-1);   /* mirror like a selfie */
+}
+.enroll-status { margin: 1rem 0 0.75rem; font-size: 1.1rem; }
+.enroll-name {
+  width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 10px; padding: 0.7rem 0.9rem; font-size: 1.1rem; text-align: center;
+}
+.enroll-name:focus { outline: none; border-color: var(--accent); }
+
+.faces-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; text-align: left; }
+.faces-list li {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem 0.9rem;
+}
+.faces-list small { color: var(--muted); margin-left: 0.4rem; }
+.faces-empty { color: var(--muted); justify-content: center; }
+.faces-forget {
+  background: transparent; color: var(--bad); border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.3rem 0.7rem; cursor: pointer; font-size: 0.8rem;
+}
+.faces-forget:hover { border-color: var(--bad); }
+
+.btn-primary {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #06121a;
+  border: none; border-radius: 12px; padding: 0.8rem 1.6rem; font-size: 1.05rem;
+  font-weight: 600; cursor: pointer;
+}
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost {
+  background: transparent; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 12px; padding: 0.8rem 1.4rem; font-size: 1.05rem; cursor: pointer;
+}
+.btn-ghost:hover { color: var(--text); border-color: var(--accent); }
