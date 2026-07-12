@@ -17,6 +17,7 @@
         <div class="rec" id="rec-badge" hidden>● REC — listening</div>
         <button id="mic-btn" class="ghost-btn" title="Enable microphone listening">🎙 enable mic</button>
         <button id="cam-btn" class="ghost-btn" hidden title="Enable webcam face recognition">👤 <span class="label">enable camera</span></button>
+        <button id="diary-btn" class="ghost-btn" hidden title='Listen for "Dear Diary"'>📔 <span class="label">enable dear diary</span></button>
         <button id="faces-manage-btn" class="ghost-btn" hidden title="Manage enrolled faces">Faces <span class="count">0</span></button>
         <button id="alexa-badge" class="ghost-btn alexa-badge" hidden title="Test Alexa announcement">
           <span class="dot" id="alexa-dot"></span><span>Alexa</span>
@@ -65,6 +66,43 @@
         <div class="modal__actions">
           <button id="faces-close" class="btn-ghost">Close</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Dear Diary: "are you ready?" prompt, heard after the wake word -->
+    <div id="diary-ready-overlay" class="face-overlay" hidden>
+      <div class="face-overlay__card">
+        <div class="face-overlay__wave">📔</div>
+        <h1>Dear Diary</h1>
+        <p id="diary-ready-text">Are you ready?</p>
+        <p class="face-overlay__fine">Say <strong>"yes"</strong>, or tap below when you're ready to record.</p>
+        <div class="face-overlay__actions">
+          <button id="diary-ready-yes" class="btn-primary">Yes, I'm ready</button>
+          <button id="diary-ready-no" class="btn-ghost">Not now</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dear Diary: countdown + recording overlay -->
+    <div id="diary-record-overlay" class="diary-overlay" hidden>
+      <div class="diary-countdown" id="diary-countdown" hidden>
+        <div class="diary-dot" id="diary-dot"><span id="diary-dot-number">5</span></div>
+        <div class="diary-countdown__label">get ready…</div>
+      </div>
+      <div class="diary-recording" id="diary-recording" hidden>
+        <video id="diary-preview" class="diary-preview" playsinline muted autoplay></video>
+        <div class="diary-recording__hud">
+          <div class="diary-rec-badge">● REC <span id="diary-timer">0:00</span></div>
+          <div class="diary-suggestions">
+            <div class="diary-suggestions__title">Not sure what to talk about? Here are some ideas:</div>
+            <ul id="diary-suggestions-list"></ul>
+          </div>
+          <button id="diary-stop-btn" class="btn-primary diary-stop-btn">Finish recording</button>
+        </div>
+      </div>
+      <div class="diary-saving" id="diary-saving" hidden>
+        <div class="diary-saving__spinner"></div>
+        <div id="diary-saving-text">Saving your entry…</div>
       </div>
     </div>
 
@@ -171,6 +209,19 @@
         <ol id="water-board" class="board__list"></ol>
       </div>
     </section>
+
+    <!-- Dear Diary page -->
+    <section class="page diary-page" data-page="diary" hidden>
+      <header class="diary-head">
+        <div class="diary-title">📔 Dear Diary</div>
+        <button id="diary-record-now" class="ghost-btn">record an entry now</button>
+      </header>
+      <p class="diary-hint" id="diary-hint">
+        Say <strong>"Dear Diary"</strong> any time to start a new entry — up to a minute long, saved
+        straight to the family Google Drive.
+      </p>
+      <ul id="diary-entries" class="diary-entries"></ul>
+    </section>
     </div><!-- /pages -->
 
     <nav class="page-nav" id="page-nav"></nav>
@@ -223,9 +274,21 @@
     </article>
   </template>
 
+  <template id="diary-entry-tpl">
+    <li class="diary-entry">
+      <span class="diary-entry__icon">🎬</span>
+      <span class="diary-entry__meta">
+        <span class="diary-entry__date" data-f="date"></span>
+        <span class="diary-entry__dur" data-f="dur"></span>
+      </span>
+      <a class="diary-entry__link" data-f="link" target="_blank" rel="noopener">open</a>
+    </li>
+  </template>
+
   <script src="./app.js"></script>
   <script src="./faces.js"></script>
   <script src="./water.js"></script>
+  <script src="./diary.js"></script>
   <script src="./pages.js"></script>
 </body>
 </html>

@@ -268,6 +268,64 @@ WATER_ESP32_URL=http://<esp32-ip>
 > independent hardware cutoffs so the pump stops even if the network dies. Keep
 > both conservative and don't dispense unattended.
 
+### 9. (Optional) Dear Diary
+
+A wake-word-activated video diary, so the kids can record a quick entry
+whenever they feel like it. Off by default — enable with `DIARY_ENABLED=1`.
+
+**How it works:** say **"Dear Diary"** (`DIARY_WAKE_WORD`) anywhere near the
+display. It asks **"are you ready?"** (out loud, and on screen) — say **"yes"**
+or tap the button. A big colored dot counts down from `DIARY_COUNTDOWN_SECONDS`
+(default 5), then the webcam starts recording. A timer and a list of prompt
+ideas ("What did you do today?", "Tell a joke", ...) stay on screen for up to
+`DIARY_MAX_SECONDS` (default 60) — tap **Finish recording** to stop early. The
+clip is then timestamped and uploaded.
+
+- Wake-word listening and "yes" confirmation both run **in the browser** via
+  the Web Speech API (`webkitSpeechRecognition`) — no audio is sent to the
+  server until a person actually finishes (or times out) an entry.
+- Video recording uses `MediaRecorder` on the display's own webcam.
+- The server uploads the finished clip to a **Google Drive** folder and keeps
+  a `dear-diary-index.json` manifest in that same folder up to date, so anyone
+  can browse the folder directly. A local copy of the index
+  (`watchtower/diary.json`, `.gitignore`d) backs the dashboard's own "recent
+  entries" list.
+
+**Enable it:**
+
+```
+# .env
+DIARY_ENABLED=1
+```
+
+**Set up Google Drive** (optional but recommended — without it, entries are
+recorded but only ever kept on the display itself):
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a
+   project (or reuse one), enable the **Google Drive API**, then create a
+   **service account** and generate a JSON key for it.
+2. Create (or pick) a Drive folder for entries, and **share it** with the
+   service account's `client_email` (from the JSON key) as an **Editor**.
+3. Put the folder's ID (from its URL) and the whole JSON key (as one line)
+   into `.env`:
+
+```
+# .env
+GOOGLE_DRIVE_FOLDER_ID=<folder id>
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account", ...}
+```
+
+Then open the dashboard, click **enable dear diary** once (a browser
+gesture is required for microphone access), and try saying "Dear Diary". You
+can also skip the wake word entirely and tap **record an entry now** on the
+Dear Diary page.
+
+> Voice activation needs a Chromium-based browser (Web Speech API support
+> varies). If it isn't supported, the button falls back to a message and the
+> manual "record an entry now" button on the Dear Diary page still works.
+> Webcam/mic access has the same HTTPS-or-`localhost` requirement as face
+> recognition, above.
+
 ## HTTP / event API
 
 | Route | Purpose |
@@ -291,6 +349,8 @@ WATER_ESP32_URL=http://<esp32-ip>
 | `POST /api/water/pour/start` `{userId}` | Press Drink — start a pour (runs the pump) |
 | `POST /api/water/pour/stop` | Press Drink again — stop the pour and record the ml |
 | `POST /api/water/flow` `{ml, sessionId?}` | The ESP32 reports cumulative flow for the active pour |
+| `GET /api/diary` | Wake word, countdown/max length, suggestions, Drive status, and recent entries — 404 if disabled |
+| `POST /api/diary/upload` `multipart: video, durationSec, recordedAt` | Upload a finished entry; saved to Drive (if configured) and to the local index |
 | `WS /ws` | Live event stream to the dashboard |
 
 Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
@@ -299,7 +359,8 @@ Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
 `alert.hazard`, `incident.recorded`, `capture.error`, `audio.error`,
 `auto.updated`, `alexa.status`, `alexa.announced`, `alexa.error`,
 `face.recognized`, `face.enrolled`, `face.forgotten`,
-`water.pour.start`, `water.pour.progress`, `water.dispensed`, `water.changed`.
+`water.pour.start`, `water.pour.progress`, `water.dispensed`, `water.changed`,
+`diary.recorded`.
 
 ## Logging
 

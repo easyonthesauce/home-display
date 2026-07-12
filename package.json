@@ -15,6 +15,8 @@
     "@vladmandic/face-api": "^1.7.15",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "googleapis": "^173.0.0",
+    "multer": "^2.2.0",
     "tuyapi": "^7.7.1",
     "ws": "^8.18.0"
   },

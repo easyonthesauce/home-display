@@ -267,6 +267,7 @@
       case 'alexa.error': flashStatus(`🔇 Alexa announcement failed: ${msg.payload.error}`); break;
       case 'face.enrolled': flashStatus(`👤 enrolled ${msg.payload.name}`); break;
       case 'face.forgotten': flashStatus('👤 a face was forgotten'); break;
+      case 'diary.recorded': flashStatus('📔 a new Dear Diary entry was saved'); break;
     }
   }
 
