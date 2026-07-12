@@ -231,6 +231,43 @@ greeting; a new face triggers the enrolment flow.
 Recognising a known face emits a `face.recognized` event, so you can pair it
 with the Alexa alerts — see the `welcome-home` rule in `alerts.json.example`.
 
+### 8. (Optional) Water Challenge
+
+A hydration game to get the family drinking more water. Enable with
+`WATER_ENABLED=1` and the dashboard gains a second **page** — the display
+auto-rotates between pages when idle, and you can tap the dots at the bottom to
+switch. (A raised-voices event always jumps back to the watch page.)
+
+On the Water Challenge page each opted-in person gets a **droplet swimlane**
+that fills toward their daily goal (`WATER_DAILY_GOAL_ML`) over the selected
+period (24h / week / month / 6mo / 12mo), a **leaderboard**, and per-lane trend
+arrows. Tap **＋ join** to add someone. To drink: **tap your lane**, then press
+the big central **Drink** button — that runs the pump; press it again (or let a
+safety limit trigger) to stop, and the measured millilitres are recorded and
+ranked.
+
+**The dispenser** is an **ESP32 + 4-relay board + 12V pump + flow meter**.
+Watchtower switches the pump relay over HTTP and the ESP32 reports measured flow
+back. The firmware + wiring are in [`watchtower/esp32/`](./esp32/). Point
+Watchtower at it:
+
+```
+# .env
+WATER_ENABLED=1
+WATER_ESP32_URL=http://<esp32-ip>
+```
+
+> **No hardware yet? It still works.** Leave `WATER_ESP32_URL` blank and
+> Watchtower runs the whole game in **mock mode** — pours are simulated at
+> `WATER_MOCK_FLOW_ML_PER_SEC`, so you can play, test, and demo the page before
+> wiring anything up.
+
+> ⚠️ **Pump safety.** This switches a real 12V pump from a web button — a
+> dropped "stop" could overflow. Watchtower enforces `WATER_MAX_POUR_ML` /
+> `WATER_MAX_POUR_SECONDS` cutoffs, **and** the ESP32 firmware enforces its own
+> independent hardware cutoffs so the pump stops even if the network dies. Keep
+> both conservative and don't dispense unattended.
+
 ## HTTP / event API
 
 | Route | Purpose |
@@ -247,6 +284,13 @@ with the Alexa alerts — see the `welcome-home` rule in `alerts.json.example`.
 | `POST /api/faces/:id/samples` `{descriptors}` | Add more samples to an enrolled person |
 | `DELETE /api/faces/:id` | Forget (delete) an enrolled person's signature |
 | `POST /api/faces/recognized` `{id, name}` | Dashboard reports a recognised face; relayed (de-duped) as a `face.recognized` event |
+| `GET /api/water?period=<24h\|week\|month\|6mo\|12mo>` | Water-challenge view: per-participant totals, droplet fill, ranks, trend, active pour — 404 if disabled |
+| `POST /api/water/participants` `{name}` | Join the challenge / re-opt-in |
+| `POST /api/water/participants/:id/opt` `{optedIn}` | Opt a participant in/out |
+| `DELETE /api/water/participants/:id` | Remove a participant |
+| `POST /api/water/pour/start` `{userId}` | Press Drink — start a pour (runs the pump) |
+| `POST /api/water/pour/stop` | Press Drink again — stop the pour and record the ml |
+| `POST /api/water/flow` `{ml, sessionId?}` | The ESP32 reports cumulative flow for the active pour |
 | `WS /ws` | Live event stream to the dashboard |
 
 Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
@@ -254,7 +298,8 @@ Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
 `scene.update`, `audio.start` / `audio.update` / `audio.end`, `alert.child`,
 `alert.hazard`, `incident.recorded`, `capture.error`, `audio.error`,
 `auto.updated`, `alexa.status`, `alexa.announced`, `alexa.error`,
-`face.recognized`, `face.enrolled`, `face.forgotten`.
+`face.recognized`, `face.enrolled`, `face.forgotten`,
+`water.pour.start`, `water.pour.progress`, `water.dispensed`, `water.changed`.
 
 ## Logging
 

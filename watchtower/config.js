@@ -84,6 +84,7 @@ module.exports = {
   ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
   statePath: path.join(__dirname, 'state.json'),
   facesPath: path.join(__dirname, 'faces.json'),
+  waterPath: path.join(__dirname, 'water.json'),
   hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
   minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
   faces: {
@@ -107,4 +108,20 @@ module.exports = {
     timeoutMs: Number(process.env.ALEXA_BRIDGE_TIMEOUT_MS || 8000),
   },
   alerts,
+  water: {
+    // The hydration "water challenge" page + ESP32-controlled dispenser.
+    enabled: process.env.WATER_ENABLED === '1' || process.env.WATER_ENABLED === 'true',
+    // Per-person daily hydration goal, used to fill the swimlane droplets.
+    dailyGoalMl: Number(process.env.WATER_DAILY_GOAL_ML || 2000),
+    // Safety cutoffs for a single pour. The firmware enforces its own limits
+    // too — never trust the network to stop a pump.
+    maxPourMl: Number(process.env.WATER_MAX_POUR_ML || 1000),
+    maxPourSeconds: Number(process.env.WATER_MAX_POUR_SECONDS || 60),
+    // ESP32 dispenser HTTP endpoint. Empty → mock mode (simulated pours, so the
+    // game works and is testable without hardware).
+    esp32Url: (process.env.WATER_ESP32_URL || '').replace(/\/$/, ''),
+    esp32TimeoutMs: Number(process.env.WATER_ESP32_TIMEOUT_MS || 4000),
+    // Simulated flow rate used only in mock mode.
+    mockFlowMlPerSec: Number(process.env.WATER_MOCK_FLOW_ML_PER_SEC || 50),
+  },
 };

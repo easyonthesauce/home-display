@@ -238,14 +238,22 @@
     if (s.alexa) renderAlexaBadge(s.alexa);
     statusText.textContent = s.hasApiKey ? 'live' : 'live (mock analysis — no API key)';
   }
+  // Other page scripts (water.js) can subscribe to the shared WS stream.
+  const subscribers = [];
+  window.watchtowerSubscribe = (fn) => subscribers.push(fn);
+
   function handle(msg) {
+    for (const fn of subscribers) { try { fn(msg); } catch { /* ignore */ } }
     switch (msg.type) {
       case 'hello': applyState(msg.payload); break;
       case 'scene.update':
         renderScene(msg.payload);
         renderMess(Array.from(lastScenes.values()));
         break;
-      case 'audio.start': showArg(true); break;
+      case 'audio.start':
+        showArg(true);
+        window.watchtowerShowPage?.('watch');   // surface raised voices whatever page is up
+        break;
       case 'audio.update': showArg(true); renderAudio(msg.payload); break;
       case 'audio.end': showArg(false); break;
       case 'incident.recorded': flashStatus(`argument logged (peak ${msg.payload.peak})`); break;
