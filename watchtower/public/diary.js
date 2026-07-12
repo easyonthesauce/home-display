@@ -25,13 +25,15 @@
   let recordingStartedAt = 0;
   let timerInterval = null;
 
+  const page = document.querySelector('.page[data-page="diary"]');
+
   // ---------- bootstrap ----------
   async function init() {
     let res;
     try {
       res = await fetch('/api/diary');
-    } catch { return; }
-    if (!res.ok) return;   // Dear Diary disabled → do nothing
+    } catch { removePage(); return; }
+    if (!res.ok) { removePage(); return; }   // Dear Diary disabled → drop the page from the carousel
     const data = await res.json();
     cfg = {
       wakeWord: (data.wakeWord || 'dear diary').toLowerCase(),
@@ -53,6 +55,11 @@
     $('diary-ready-no').addEventListener('click', declineReady);
     $('diary-stop-btn').addEventListener('click', stopRecording);
     $('diary-record-now').addEventListener('click', () => triggerReady());
+  }
+
+  function removePage() {
+    if (page) { page.dataset.disabled = 'true'; page.remove(); }
+    window.dispatchEvent(new Event('pages:changed'));
   }
 
   // ---------- wake-word listening ----------

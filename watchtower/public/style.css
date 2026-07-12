@@ -12,6 +12,11 @@
   --accent: #22d3ee;
 }
 * { box-sizing: border-box; }
+/* The `hidden` attribute's UA rule (`[hidden]{display:none}`) has no special
+   priority over author rules — any class below that sets `display` (.modal,
+   .face-overlay, .diary-overlay, ...) would otherwise win the cascade and
+   render "hidden" elements anyway. Force it to always actually hide. */
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   background: radial-gradient(1200px 800px at 20% -10%, #131a2a 0%, var(--bg) 60%) fixed;
