@@ -179,6 +179,15 @@
       </div>
     </section>
 
+    <!-- Google Tasks quick view: due-soon/overdue tasks across every list -->
+    <section class="board tasks-quickview" id="tasks-quickview" hidden>
+      <div class="board__title board__title--tasks">✅ Due Soon</div>
+      <div class="tasks-quickview__connect" id="tasks-quickview-connect" hidden>
+        <a id="tasks-quickview-connect-link" class="ghost-btn" target="_blank" rel="noopener">connect Google Tasks</a>
+      </div>
+      <ol id="tasks-quickview-list" class="board__list tasks-quickview__list"></ol>
+    </section>
+
     <section class="trigger-bar" id="trigger-bar"></section>
 
     <section class="cameras" id="camera-grid"></section>
@@ -221,6 +230,19 @@
         straight to the family Google Drive.
       </p>
       <ul id="diary-entries" class="diary-entries"></ul>
+    </section>
+
+    <!-- Google Tasks board (Trello-style: one column per Google task list) -->
+    <section class="page tasks-page" data-page="tasks" hidden>
+      <header class="tasks-head">
+        <div class="tasks-title">✅ Tasks</div>
+        <div class="tasks-sync" id="tasks-sync"></div>
+      </header>
+      <div class="tasks-connect" id="tasks-connect" hidden>
+        <p>Connect your Google account to see and manage your task lists here.</p>
+        <a id="tasks-connect-link" class="btn-primary" target="_blank" rel="noopener">Connect Google Tasks</a>
+      </div>
+      <div class="tasks-board" id="tasks-board"></div>
     </section>
     </div><!-- /pages -->
 
@@ -285,10 +307,45 @@
     </li>
   </template>
 
+  <template id="tasks-quickview-item-tpl">
+    <li class="task-quick" data-list="" data-task="">
+      <button class="task-quick__check" data-f="check" title="Mark complete"></button>
+      <span class="task-quick__title" data-f="title"></span>
+      <span class="task-quick__due" data-f="due"></span>
+      <span class="task-quick__list" data-f="list"></span>
+    </li>
+  </template>
+
+  <template id="tasks-column-tpl">
+    <div class="tasks-col" data-list="">
+      <header class="tasks-col__head">
+        <span class="tasks-col__title" data-f="title"></span>
+        <span class="tasks-col__count" data-f="count"></span>
+      </header>
+      <div class="tasks-col__cards" data-f="cards"></div>
+      <form class="tasks-col__add" data-f="add">
+        <input type="text" class="tasks-col__input" placeholder="+ add a card" autocomplete="off" />
+      </form>
+    </div>
+  </template>
+
+  <template id="tasks-card-tpl">
+    <article class="task-card" draggable="true" data-list="" data-task="">
+      <button class="task-card__check" data-f="check" title="Mark complete"></button>
+      <div class="task-card__body">
+        <div class="task-card__title" data-f="title"></div>
+        <div class="task-card__notes" data-f="notes"></div>
+        <div class="task-card__due" data-f="due"></div>
+      </div>
+      <button class="task-card__del" data-f="del" title="Delete">×</button>
+    </article>
+  </template>
+
   <script src="./app.js"></script>
   <script src="./faces.js"></script>
   <script src="./water.js"></script>
   <script src="./diary.js"></script>
+  <script src="./tasks.js"></script>
   <script src="./pages.js"></script>
 </body>
 </html>

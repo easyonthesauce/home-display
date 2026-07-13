@@ -13,3 +13,5 @@ watchtower/state.json
 watchtower/faces.json
 watchtower/water.json
 watchtower/diary.json
+# Google Tasks OAuth refresh token — sensitive, never commit
+watchtower/tasks-tokens.json
