@@ -116,6 +116,12 @@ module.exports = {
   },
   transcribeCmd: process.env.TRANSCRIBE_CMD || '',
   ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
+  // Most cameras/NVRs speak RTSP-over-TCP fine, but some only support UDP
+  // (or vice versa) — surfaced as "Output file does not contain any stream"
+  // with no other explanation, so make it a one-line env override.
+  ffmpegRtspTransport: /^(tcp|udp)$/i.test(process.env.FFMPEG_RTSP_TRANSPORT || '')
+    ? process.env.FFMPEG_RTSP_TRANSPORT.toLowerCase()
+    : 'tcp',
   statePath: path.join(__dirname, 'state.json'),
   facesPath: path.join(__dirname, 'faces.json'),
   waterPath: path.join(__dirname, 'water.json'),

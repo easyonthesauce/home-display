@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createLogger } = require('./logger');
+const config = require('./config');
 
 const log = createLogger('capture');
 
@@ -13,6 +14,27 @@ function maskRtsp(url) {
   } catch {
     return '(unparseable rtsp url)';
   }
+}
+
+// Windows ffmpeg builds emit \r\n; splitting on \n alone leaves a trailing \r
+// on every line, which then makes terminals/log viewers overwrite part of the
+// previous line when it's printed without an intervening \n (classic garbled
+// "stre" / truncated-path symptom). Normalize before we ever split on lines.
+function cleanLines(text) {
+  return text.replace(/\r\n?/g, '\n').split('\n').filter(Boolean);
+}
+
+// ffmpeg's own message for "the RTSP input never produced a video frame in
+// the capture window" (bad URL/channel, auth failure, transport mismatch,
+// unreachable camera, ...) — worth a pointed hint since the raw ffmpeg text
+// doesn't say any of that explicitly.
+function hintFor(stderrTail) {
+  if (/does not contain any stream/i.test(stderrTail)) {
+    return 'no video frames were received from the camera in time — verify the RTSP URL/channel path and credentials '
+      + '(test it directly with `ffplay <url>` or VLC), and try FFMPEG_RTSP_TRANSPORT=udp if this camera/NVR '
+      + 'doesn\'t support TCP transport';
+  }
+  return null;
 }
 
 // Thin ffmpeg wrappers for pulling a short burst of frames (and optionally an
@@ -41,8 +63,11 @@ function runFfmpeg(ffmpeg, args, timeoutMs) {
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) return resolve();
-      log.debug(`ffmpeg stderr tail: ${stderr.split('\n').filter(Boolean).slice(-6).join(' | ')}`);
-      reject(new Error(`ffmpeg exited ${code}: ${stderr.split('\n').filter(Boolean).slice(-3).join(' ')}`));
+      const lines = cleanLines(stderr);
+      log.debug(`ffmpeg stderr tail: ${lines.slice(-6).join(' | ')}`);
+      const tail = lines.slice(-3).join(' | ');
+      const hint = hintFor(tail);
+      reject(new Error(`ffmpeg exited ${code}: ${tail}${hint ? ` — ${hint}` : ''}`));
     });
   });
 }
@@ -55,13 +80,13 @@ async function captureFrames(rtsp, { seconds = 10, count = 8, ffmpeg = 'ffmpeg' 
   const pattern = path.join(dir, 'frame-%03d.jpg');
   const args = [
     '-hide_banner', '-loglevel', 'error',
-    '-rtsp_transport', 'tcp', '-y', '-i', rtsp,
+    '-rtsp_transport', config.ffmpegRtspTransport, '-y', '-i', rtsp,
     '-t', String(seconds),
     '-vf', `fps=${fps},scale='min(1280,iw)':-2`,
     '-q:v', '4', pattern,
   ];
   const start = Date.now();
-  log.info(`capturing frames from ${maskRtsp(rtsp)} (${seconds}s @ ${fps}fps → target ${count} frames)`);
+  log.info(`capturing frames from ${maskRtsp(rtsp)} (${seconds}s @ ${fps}fps → target ${count} frames, transport=${config.ffmpegRtspTransport})`);
   try {
     await runFfmpeg(ffmpeg, args, (seconds + 25) * 1000);
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.jpg')).sort();
@@ -88,7 +113,7 @@ async function captureAudio(rtsp, { seconds = 5, ffmpeg = 'ffmpeg' } = {}) {
   const out = path.join(dir, 'clip.wav');
   const args = [
     '-hide_banner', '-loglevel', 'error',
-    '-rtsp_transport', 'tcp', '-y', '-i', rtsp,
+    '-rtsp_transport', config.ffmpegRtspTransport, '-y', '-i', rtsp,
     '-t', String(seconds), '-vn', '-ac', '1', '-ar', '16000', '-f', 'wav', out,
   ];
   const start = Date.now();
