@@ -22,6 +22,7 @@ const { createWaterStore } = require('./water');
 const { createEsp32Client } = require('./esp32');
 const { createPourManager } = require('./water-pour');
 const { createDiaryStore, createDriveClient } = require('./diary');
+const { createTasksAuth, createTasksClient, createTasksCache, buildQuickView } = require('./tasks');
 const multer = require('multer');
 
 const log = createLogger('server');
@@ -50,6 +51,26 @@ const diaryUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 300 * 1024 * 1024 },
 });
+
+// Google Tasks: quick-view widget on the watch page + a Trello-style board
+// page. Needs interactive OAuth (Tasks is per-user data, unlike Dear Diary's
+// Drive service account) — see /api/tasks/auth/status for the connect flow.
+const tasksAuth = config.tasks.enabled
+  ? createTasksAuth({
+    clientId: config.tasks.clientId,
+    clientSecret: config.tasks.clientSecret,
+    redirectUri: config.tasks.redirectUri,
+    tokenFile: config.tasksTokenPath,
+  })
+  : null;
+if (config.tasks.enabled && !tasksAuth) {
+  log.warn('TASKS_ENABLED but GOOGLE_OAUTH_CLIENT_ID/SECRET are not configured — the tasks page will stay disabled');
+}
+const tasksClient = tasksAuth ? createTasksClient(tasksAuth.client) : null;
+const tasksCache = tasksClient
+  ? createTasksCache({ client: tasksClient, pollMs: config.tasks.pollSeconds * 1000, emit: bus.emit })
+  : null;
+if (tasksCache && tasksAuth.isAuthorized()) tasksCache.start();
 
 // De-dupe recognition/greeting events so we don't spam the bus every frame the
 // same person is on camera. Keyed by person id -> last-emitted timestamp.
@@ -259,6 +280,10 @@ app.get('/api/state', (_req, res) => {
       wakeWord: config.diary.wakeWord,
       driveConfigured: Boolean(diaryDrive),
       entryCount: diaryStore.count(),
+    },
+    tasks: {
+      enabled: config.tasks.enabled,
+      authorized: Boolean(tasksAuth && tasksAuth.isAuthorized()),
     },
     at: Date.now(),
   });
@@ -547,6 +572,161 @@ app.post('/api/diary/upload', diaryGuard, diaryUpload.single('video'), async (re
   }
 });
 
+// ── Google Tasks ─────────────────────────────────────────────────────────────
+function tasksGuard(_req, res, next) {
+  if (!config.tasks.enabled || !tasksAuth) {
+    return res.status(404).json({ ok: false, error: 'Google Tasks is disabled (set TASKS_ENABLED=1 and configure GOOGLE_OAUTH_CLIENT_ID/SECRET)' });
+  }
+  next();
+}
+
+let tasksCacheStarted = Boolean(tasksCache && tasksAuth && tasksAuth.isAuthorized());
+
+// Whether we're connected yet, and (if not) the URL to visit to grant access.
+app.get('/api/tasks/auth/status', tasksGuard, (_req, res) => {
+  const authorized = tasksAuth.isAuthorized();
+  res.json({ enabled: true, authorized, authUrl: authorized ? null : tasksAuth.getAuthUrl() });
+});
+
+// Google redirects here after consent. Runs on this server so the redirect
+// URI can just be http://<this host>:<port>/api/tasks/oauth/callback.
+app.get('/api/tasks/oauth/callback', tasksGuard, async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.status(400).send(`Google Tasks authorization failed: ${error}`);
+  if (!code) return res.status(400).send('Missing "code" query parameter');
+  try {
+    await tasksAuth.handleCallback(String(code));
+    log.info('Google Tasks authorized');
+    if (!tasksCacheStarted) { tasksCache.start(); tasksCacheStarted = true; }
+    else tasksCache.refresh();
+    bus.emit('tasks.changed', { reason: 'authorized' });
+    res.send('<!doctype html><html><body style="font-family:system-ui;padding:2rem;background:#07080d;color:#e8ecf8">'
+      + '<h2>Google Tasks connected ✓</h2><p>You can close this tab and go back to the dashboard.</p></body></html>');
+  } catch (e) {
+    log.error(`Google Tasks OAuth callback failed: ${e.message}`);
+    res.status(500).send(`Authorization failed: ${e.message}`);
+  }
+});
+
+app.post('/api/tasks/auth/signout', tasksGuard, (_req, res) => {
+  tasksAuth.signOut();
+  tasksCache.stop();
+  tasksCacheStarted = false;
+  bus.emit('tasks.changed', { reason: 'signed-out' });
+  res.json({ ok: true });
+});
+
+// Board + quick-view data for the dashboard. Served from cache — see
+// TASKS_POLL_SECONDS for how fresh it is.
+app.get('/api/tasks', tasksGuard, (_req, res) => {
+  if (!tasksAuth.isAuthorized()) {
+    return res.json({ enabled: true, authorized: false, authUrl: tasksAuth.getAuthUrl() });
+  }
+  const snap = tasksCache.snapshot();
+  res.json({
+    enabled: true,
+    authorized: true,
+    boards: snap.boards,
+    quickView: buildQuickView(snap.boards, config.tasks.dueSoonHours, config.tasks.quickViewLimit),
+    lastSyncAt: snap.lastSyncAt,
+    lastError: snap.lastError,
+  });
+});
+
+// Create a card in a column (Google task list).
+app.post('/api/tasks/:listId', tasksGuard, async (req, res) => {
+  if (!tasksAuth.isAuthorized()) return res.status(401).json({ ok: false, error: 'not authorized' });
+  const { title, notes, due } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ ok: false, error: 'title is required' });
+  try {
+    const task = await tasksClient.insertTask(req.params.listId, { title: String(title).trim(), notes, due });
+    await tasksCache.refresh();
+    res.json({ ok: true, task });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
+// Toggle complete/incomplete.
+app.post('/api/tasks/:listId/:taskId/toggle', tasksGuard, async (req, res) => {
+  if (!tasksAuth.isAuthorized()) return res.status(401).json({ ok: false, error: 'not authorized' });
+  const completed = (req.body || {}).completed !== false;
+  try {
+    const task = await tasksClient.patchTask(req.params.listId, req.params.taskId, {
+      status: completed ? 'completed' : 'needsAction',
+    });
+    await tasksCache.refresh();
+    res.json({ ok: true, task });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
+// Edit a card's title/notes/due date.
+app.patch('/api/tasks/:listId/:taskId', tasksGuard, async (req, res) => {
+  if (!tasksAuth.isAuthorized()) return res.status(401).json({ ok: false, error: 'not authorized' });
+  const { title, notes, due } = req.body || {};
+  const patch = {};
+  if (title !== undefined) patch.title = String(title).trim();
+  if (notes !== undefined) patch.notes = notes;
+  if (due !== undefined) patch.due = due || null;
+  try {
+    const task = await tasksClient.patchTask(req.params.listId, req.params.taskId, patch);
+    await tasksCache.refresh();
+    res.json({ ok: true, task });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/tasks/:listId/:taskId', tasksGuard, async (req, res) => {
+  if (!tasksAuth.isAuthorized()) return res.status(401).json({ ok: false, error: 'not authorized' });
+  try {
+    await tasksClient.deleteTask(req.params.listId, req.params.taskId);
+    await tasksCache.refresh();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
+// Drag a card to a new column (list) and/or a new position within one.
+// `previousTaskId` is the id of the card that should now precede it (omit
+// for top of column). Moving across lists isn't a native Tasks API op, so we
+// recreate the task in the destination list and delete the original.
+app.post('/api/tasks/:listId/:taskId/move', tasksGuard, async (req, res) => {
+  if (!tasksAuth.isAuthorized()) return res.status(401).json({ ok: false, error: 'not authorized' });
+  const { listId, taskId } = req.params;
+  const { toListId, previousTaskId } = req.body || {};
+  const destListId = toListId || listId;
+  try {
+    if (destListId === listId) {
+      const task = await tasksClient.moveTask(listId, taskId, { previous: previousTaskId });
+      await tasksCache.refresh();
+      return res.json({ ok: true, task });
+    }
+    const snap = tasksCache.snapshot();
+    const source = (snap.boards.find((b) => b.id === listId) || {}).tasks || [];
+    const original = source.find((t) => t.id === taskId);
+    if (!original) return res.status(404).json({ ok: false, error: 'task not found in source list' });
+
+    const created = await tasksClient.insertTask(destListId, {
+      title: original.title, notes: original.notes, due: original.due,
+    });
+    if (original.completed) {
+      await tasksClient.patchTask(destListId, created.id, { status: 'completed' });
+    }
+    if (previousTaskId) {
+      await tasksClient.moveTask(destListId, created.id, { previous: previousTaskId });
+    }
+    await tasksClient.deleteTask(listId, taskId);
+    await tasksCache.refresh();
+    res.json({ ok: true, task: created });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -592,6 +772,10 @@ wss.on('connection', (ws, req) => {
         wakeWord: config.diary.wakeWord,
         driveConfigured: Boolean(diaryDrive),
         entryCount: diaryStore.count(),
+      },
+      tasks: {
+        enabled: config.tasks.enabled,
+        authorized: Boolean(tasksAuth && tasksAuth.isAuthorized()),
       },
     },
     at: Date.now(),
@@ -648,12 +832,20 @@ server.listen(config.port, () => {
   } else {
     log.info('Dear Diary disabled (set DIARY_ENABLED=1 to enable the video-diary page)');
   }
+  if (config.tasks.enabled && tasksAuth) {
+    log.info(`Google Tasks: ${tasksAuth.isAuthorized() ? 'authorized' : 'NOT authorized yet — visit /api/tasks/auth/status for the connect URL'}, polling every ${config.tasks.pollSeconds}s`);
+  } else if (config.tasks.enabled) {
+    log.warn('TASKS_ENABLED but GOOGLE_OAUTH_CLIENT_ID/SECRET missing — Google Tasks stays disabled');
+  } else {
+    log.info('Google Tasks disabled (set TASKS_ENABLED=1 to enable the tasks quick-view + board page)');
+  }
 });
 
 function shutdown(signal) {
   log.info(`received ${signal} — shutting down`);
   autoScheduler.stopAll();
   if (alexaStatusTimer) clearInterval(alexaStatusTimer);
+  if (tasksCache) tasksCache.stop();
   // Safety: never leave the pump running across a restart.
   if (pourManager.isActive()) { log.warn('pour in progress at shutdown — stopping pump'); pourManager.stop('shutdown'); }
   try { smtp.close(); } catch (e) { log.warn(`error closing SMTP server: ${e.message}`); }

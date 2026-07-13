@@ -333,6 +333,50 @@ Dear Diary page.
 > Webcam/mic access has the same HTTPS-or-`localhost` requirement as face
 > recognition, above.
 
+### 10. (Optional) Google Tasks
+
+A **"due soon"** quick-view widget on the watch page, plus a dedicated
+**Tasks** page with drag-and-drop, Trello-style columns — one per Google task
+list. Off by default — enable with `TASKS_ENABLED=1`.
+
+Unlike Dear Diary's Drive upload, tasks are per-user data, so this needs an
+interactive **OAuth** consent flow rather than a service account:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create (or
+   reuse) a project, enable the **Google Tasks API**, then create an
+   **OAuth 2.0 Client ID** of type "Web application". Add this server's own
+   callback URL as an authorized redirect URI (adjust host/port to match how
+   it's actually reached — defaults to `http://localhost:4000/api/tasks/oauth/callback`).
+2. Put the client ID + secret in `.env`:
+
+```
+# .env
+TASKS_ENABLED=1
+GOOGLE_OAUTH_CLIENT_ID=<client id>
+GOOGLE_OAUTH_CLIENT_SECRET=<client secret>
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:4000/api/tasks/oauth/callback
+```
+
+3. Start the server, then open the **Tasks** page (or the quick-view widget)
+   and click **connect Google Tasks** — sign in once and grant access. The
+   refresh token is then stored in `watchtower/tasks-tokens.json`
+   (`.gitignore`d — never commit it) and reused across restarts.
+
+**How it works:**
+
+- Each Google task list becomes a board column; each task a draggable card.
+  Drag a card within a column to reorder it, or into another column to move
+  it there — dropped position is preserved either way.
+- Tick a card's checkbox to mark it complete/incomplete; the × removes it;
+  typing in a column's "+ add a card" box creates a new task there.
+- The watch page's quick-view widget lists overdue and soon-due tasks (within
+  `TASKS_DUE_SOON_HOURS`, default 48h) across every list, soonest first —
+  handy for a glance without switching pages.
+- The server polls Google Tasks every `TASKS_POLL_SECONDS` (default 60) so
+  edits made elsewhere (phone, Gmail, Calendar) show up here too; edits made
+  on this dashboard apply immediately and push to every connected display via
+  the `tasks.changed` WebSocket event.
+
 ## HTTP / event API
 
 | Route | Purpose |
@@ -358,6 +402,15 @@ Dear Diary page.
 | `POST /api/water/flow` `{ml, sessionId?}` | The ESP32 reports cumulative flow for the active pour |
 | `GET /api/diary` | Wake word, countdown/max length, suggestions, Drive status, and recent entries — 404 if disabled |
 | `POST /api/diary/upload` `multipart: video, durationSec, recordedAt` | Upload a finished entry; saved to Drive (if configured) and to the local index |
+| `GET /api/tasks/auth/status` | Whether Google Tasks is authorized, and the consent URL if not — 404 if disabled |
+| `GET /api/tasks/oauth/callback` | Google's OAuth redirect target; exchanges the code and stores the refresh token |
+| `POST /api/tasks/auth/signout` | Forget the stored refresh token |
+| `GET /api/tasks` | Board columns (task lists + tasks) and the due-soon quick view |
+| `POST /api/tasks/:listId` `{title, notes?, due?}` | Create a task in a list |
+| `POST /api/tasks/:listId/:taskId/toggle` `{completed}` | Mark a task complete/incomplete |
+| `PATCH /api/tasks/:listId/:taskId` `{title?, notes?, due?}` | Edit a task |
+| `DELETE /api/tasks/:listId/:taskId` | Delete a task |
+| `POST /api/tasks/:listId/:taskId/move` `{toListId?, previousTaskId?}` | Reorder within a list and/or move it to another list |
 | `WS /ws` | Live event stream to the dashboard |
 
 Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
@@ -367,7 +420,7 @@ Event types (also delivered to `WATCH_WEBHOOKS`, and to `alerts.json` rules):
 `auto.updated`, `alexa.status`, `alexa.announced`, `alexa.error`,
 `face.recognized`, `face.enrolled`, `face.forgotten`,
 `water.pour.start`, `water.pour.progress`, `water.dispensed`, `water.changed`,
-`diary.recorded`.
+`diary.recorded`, `tasks.changed`.
 
 ## Logging
 

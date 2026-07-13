@@ -430,3 +430,71 @@ body {
   border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.7rem;
 }
 .diary-entry__link:hover { border-color: var(--accent); }
+
+/* ── Google Tasks: quick view (watch page) ─────────────────────────────────── */
+.tasks-quickview { margin-top: 0.75rem; }
+.board__title--tasks { color: var(--accent); }
+.tasks-quickview__connect { margin-bottom: 0.5rem; }
+.tasks-quickview__list { padding-left: 0; list-style: none; }
+.task-quick {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0;
+}
+.task-quick__check {
+  width: 18px; height: 18px; flex: none; border-radius: 5px; cursor: pointer;
+  background: transparent; border: 1px solid var(--line);
+}
+.task-quick__check:hover { border-color: var(--accent); }
+.task-quick__title { flex: 1; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-quick__due { font-size: 0.75rem; color: var(--warn); white-space: nowrap; }
+.task-quick__due.overdue { color: var(--bad); }
+.task-quick__list { font-size: 0.7rem; color: var(--muted); white-space: nowrap; }
+
+/* ── Google Tasks: Trello-style board page ─────────────────────────────────── */
+.tasks-page { background: radial-gradient(1000px 500px at 50% -10%, rgba(34,211,238,0.08), transparent 60%); }
+.tasks-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.tasks-title { font-size: 1.4rem; font-weight: 300; }
+.tasks-sync { color: var(--muted); font-size: 0.8rem; }
+.tasks-connect { display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem; color: var(--muted); }
+
+.tasks-board {
+  flex: 1; min-height: 0; display: flex; gap: 1rem; overflow-x: auto; align-items: flex-start;
+}
+.tasks-col {
+  flex: 0 0 clamp(220px, 22vw, 320px); height: 100%; min-height: 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem;
+}
+.tasks-col__head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.tasks-col__title { font-weight: 700; font-size: 0.95rem; }
+.tasks-col__count { color: var(--muted); font-size: 0.8rem; }
+.tasks-col__cards { flex: 1; min-height: 40px; overflow-y: auto; display: grid; gap: 0.5rem; align-content: start; }
+.tasks-col__input {
+  width: 100%; background: var(--bg-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.45rem 0.6rem; font-size: 0.85rem;
+}
+.tasks-col__input:focus { outline: none; border-color: var(--accent); }
+
+.task-card {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.6rem 0.7rem; cursor: grab;
+}
+.task-card.dragging { opacity: 0.4; }
+.task-card.completed { opacity: 0.55; }
+.task-card.completed .task-card__title { text-decoration: line-through; }
+.task-card__check {
+  width: 18px; height: 18px; margin-top: 0.1rem; flex: none; border-radius: 5px; cursor: pointer;
+  background: transparent; border: 1px solid var(--line);
+}
+.task-card__check:hover { border-color: var(--accent); }
+.task-card.completed .task-card__check { background: var(--good); border-color: var(--good); }
+.task-card__body { flex: 1; min-width: 0; }
+.task-card__title { font-size: 0.9rem; word-break: break-word; }
+.task-card__notes { color: var(--muted); font-size: 0.78rem; margin-top: 0.2rem; word-break: break-word; }
+.task-card__due { font-size: 0.72rem; color: var(--warn); margin-top: 0.3rem; }
+.task-card__due.overdue { color: var(--bad); }
+.task-card__del {
+  flex: none; background: transparent; border: none; color: var(--muted); cursor: pointer;
+  font-size: 1.1rem; line-height: 1; padding: 0 0.2rem;
+}
+.task-card__del:hover { color: var(--bad); }

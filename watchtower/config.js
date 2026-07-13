@@ -120,6 +120,7 @@ module.exports = {
   facesPath: path.join(__dirname, 'faces.json'),
   waterPath: path.join(__dirname, 'water.json'),
   diaryPath: path.join(__dirname, 'diary.json'),
+  tasksTokenPath: path.join(__dirname, 'tasks-tokens.json'),
   hasApiKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
   hasApiKey: llmHasApiKey,
   minAutoTriggerSeconds: MIN_AUTO_TRIGGER_SECONDS,
@@ -194,5 +195,27 @@ module.exports = {
       // every entry (filename, link, timestamp, duration) for easy browsing.
       indexFileName: process.env.GOOGLE_DRIVE_INDEX_FILENAME || 'dear-diary-index.json',
     },
+  },
+  tasks: {
+    // Google Tasks: a "due soon" quick view on the watch page, plus a
+    // dedicated Trello-style board page (one column per Google task list).
+    // Off by default. Unlike Dear Diary's Drive upload, Tasks is per-user
+    // data — a service account can't see anyone's personal task lists — so
+    // this needs an interactive OAuth consent flow (see /api/tasks/auth/status).
+    enabled: process.env.TASKS_ENABLED === '1' || process.env.TASKS_ENABLED === 'true',
+    clientId: process.env.GOOGLE_OAUTH_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',
+    // Must exactly match an "Authorized redirect URI" on the OAuth client in
+    // Google Cloud Console. Defaults to this server's own callback route.
+    redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI
+      || `http://localhost:${Number(process.env.WATCH_PORT || 4000)}/api/tasks/oauth/callback`,
+    // How often to poll Google Tasks for changes made elsewhere (phone, Gmail,
+    // Calendar). Task edits made on this dashboard apply immediately either way.
+    pollSeconds: Number(process.env.TASKS_POLL_SECONDS || 60),
+    // A task counts as "due soon" for the quick view once it's within this
+    // many hours of its due date (overdue tasks always qualify).
+    dueSoonHours: Number(process.env.TASKS_DUE_SOON_HOURS || 48),
+    // Max rows shown in the central page's quick-view widget.
+    quickViewLimit: Number(process.env.TASKS_QUICK_VIEW_LIMIT || 6),
   },
 };
