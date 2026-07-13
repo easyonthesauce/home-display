@@ -129,6 +129,23 @@ that appears on the dashboard for each configured camera, or:
 curl -X POST "http://localhost:4000/api/trigger/test?camera=kitchen"
 ```
 
+If the trigger falls back to a mock scene with an `ffmpeg exited ...` error in
+the logs, ffmpeg never received a video frame from the camera in time. Before
+assuming Watchtower is broken:
+
+1. **Test the RTSP URL directly**, outside Watchtower — e.g.
+   `ffplay "rtsp://user:pass@192.168.1.50:554/ch05/0"` (or open the same URL
+   in VLC). If that doesn't show video either, the issue is the camera/NVR
+   URL, credentials, or network — not Watchtower.
+2. **Double-check the channel/substream path.** Most NVRs use a
+   manufacturer-specific RTSP path (e.g. `/ch05/0` = channel 5, substream 0
+   on many Hikvision-compatible NVRs; other brands use `/Streaming/Channels/501`
+   or similar). Check your NVR's manual or admin UI for the exact RTSP URL.
+3. **Try UDP transport.** ffmpeg defaults to RTSP-over-TCP, which most
+   cameras support — but some only speak UDP. Set `FFMPEG_RTSP_TRANSPORT=udp`
+   in `.env` and restart if TCP capture fails but the camera itself is
+   reachable.
+
 ### 5. (Optional) Set up auto-trigger
 
 Each camera on the dashboard also has an **auto every ⎵s** control next to its
